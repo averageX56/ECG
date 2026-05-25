@@ -1,0 +1,59 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# ecg-multidataset — requirements.txt
+# Python 3.10+
+#
+# Установка:
+#   pip install -r requirements.txt
+#
+# Минимальная установка (без GPU и без wandb):
+#   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Core ──────────────────────────────────────────────────────────────────────
+numpy>=1.24,<3.0
+scipy>=1.10
+pandas>=2.0
+
+# ── Deep learning ─────────────────────────────────────────────────────────────
+# PyTorch: устанавливайте вручную под свой CUDA/CPU:
+#   CPU:       pip install torch>=2.0 --index-url https://download.pytorch.org/whl/cpu
+#   CUDA 11.8: pip install torch>=2.0 --index-url https://download.pytorch.org/whl/cu118
+#   CUDA 12.1: pip install torch>=2.0 --index-url https://download.pytorch.org/whl/cu121
+torch>=2.0
+
+# ── ECG-специфичные ───────────────────────────────────────────────────────────
+# Чтение WFDB-форматов (.hea, .dat, .mat): MIT-BIH, PTB-XL, PhysioNet 2020
+wfdb>=4.1
+
+# Детекция R-пиков, деляниация волн P/Q/R/S/T (задачи 01–04)
+neurokit2>=0.2.7
+
+# ── ML ────────────────────────────────────────────────────────────────────────
+scikit-learn>=1.3
+
+# XGBoost для задачи 03 (ФП, метод RR-признаки → XGBoost)
+# Опционально: без него задача 03 упадёт с ImportError и продолжит с LogReg
+xgboost>=2.0
+
+# ── Предобученные веса backbone ───────────────────────────────────────────────
+# Конвертация Keras .hdf5 → PyTorch state_dict (load_weights.py)
+h5py>=3.8
+
+# ── Конфигурация ──────────────────────────────────────────────────────────────
+pyyaml>=6.0
+
+# ── Логирование экспериментов (опционально, переключается в default.yaml) ──────
+# backend: tensorboard
+tensorboard>=2.13
+
+# backend: wandb
+# wandb>=0.16
+
+# ── Утилиты ───────────────────────────────────────────────────────────────────
+tqdm>=4.65          # прогресс-бары в загрузчиках данных
+
+# ── Разработка / тесты (опционально) ─────────────────────────────────────────
+# pytest>=7.4
+# pytest-cov>=4.1
+# black>=23.0
+# ruff>=0.1
