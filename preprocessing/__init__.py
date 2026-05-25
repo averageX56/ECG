@@ -36,14 +36,9 @@ from preprocessing.snomed_map import (
     N_CLASSES,
     SNOMED_TO_INDEX,
     SCP_TO_SNOMED,
-    CLASS_IDX,
     encode_ptbxl_labels,
     encode_snomed_labels,
     decode_label_vector,
-    get_class_index,
-    get_class_indices,
-    load_physionet_mapping,
-    build_abbr_to_snomed,
 )
 
 __all__ = [
@@ -70,12 +65,7 @@ __all__ = [
     "N_CLASSES",
     "SNOMED_TO_INDEX",
     "SCP_TO_SNOMED",
-    "CLASS_IDX",
     "encode_ptbxl_labels",
     "encode_snomed_labels",
     "decode_label_vector",
-    "get_class_index",
-    "get_class_indices",
-    "load_physionet_mapping",
-    "build_abbr_to_snomed",
 ]
