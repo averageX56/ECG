@@ -207,7 +207,9 @@ def build_finetuned_model(
         dropout_head    = float(cfg.finetune.dropout_head),
     )
 
-    ckpt_path = pretrain_ckpt or Path(cfg.finetune.pretrain_checkpoint)
+    ckpt_path = pretrain_ckpt or (
+    Path(cfg.paths.checkpoint_dir) / cfg.finetune.pretrain_checkpoint
+)
 
     if ckpt_path.exists():
         logger.info("Загрузка pretrain чекпоинта: %s", ckpt_path)

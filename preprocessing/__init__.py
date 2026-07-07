@@ -35,6 +35,8 @@ from preprocessing.snomed_map import (
     SCORED_SNOMED_CLASSES,
     N_CLASSES,
     SNOMED_TO_INDEX,
+    SNOMED_TO_ABBR,      # ← добавить
+    ABBR_TO_SNOMED,      # ← добавить
     SCP_TO_SNOMED,
     encode_ptbxl_labels,
     encode_snomed_labels,
@@ -50,6 +52,8 @@ __all__ = [
     "design_lowpass_kaiser",
     "get_powerline_freq",
     "DATASET_POWERLINE",
+    "SNOMED_TO_ABBR",    # ← добавить
+    "ABBR_TO_SNOMED",
     # normalize
     "resample_signal",
     "crop_or_pad",

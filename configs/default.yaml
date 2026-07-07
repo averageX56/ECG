@@ -6,9 +6,9 @@
 paths:
   # Kaggle: /kaggle/input/physionet2020
   # Локально: ~/data/physionet2020
-  data_root:          /kaggle/input/physionet2020
-  ptbxl_root:         /kaggle/input/ptb-xl-a-large-publicly-available-electrocardiography-dataset
-  mitbih_root:        /kaggle/input/mit-bih-arrhythmia-database
+  data_root:          ~/data/physionet2020
+  ptbxl_root:         ~/data/ptb-xl
+  mitbih_root:        ~/data/mit-bih
   cache_dir:          /tmp/ecg_cache
   results_dir:        results
   backbone_cache:     ~/.cache/ecg_backbone
@@ -20,7 +20,7 @@ seed: 42
 # ── Данные (общее) ────────────────────────────────────────────────────────────
 data:
   sampling_strategy:  inv_sqrt    # inv_sqrt | uniform | dataset
-  n_workers:          4
+  n_workers:          10
   pin_memory:         true
   prefetch_factor:    2
   augment_train:      true        # случайный crop-offset при аугментации
@@ -42,7 +42,7 @@ data:
 # ── Backbone ──────────────────────────────────────────────────────────────────
 backbone:
   n_leads:            12
-  dropout:            0.5
+  dropout:            0.3
   load_pretrained:    true
   pretrained_strict:  false       # strict=False: GAP и head не в Keras-весах
 
@@ -77,7 +77,7 @@ finetune:
     - 0    # AF:    SNOMED 164889003
     - 26   # VTach: SNOMED 164896001
   # Имя чекпоинта pretrain-шага для инициализации
-  pretrain_checkpoint: checkpoints/pretrain_best.pt
+  pretrain_checkpoint: pretrain_best.pt
 
 # ── Beat Classifier: MIT-BIH (поток B) ───────────────────────────────────────
 beat_clf:
