@@ -1,0 +1,25 @@
+# ECG — три пайплайна анализа 12-канальной ЭКГ (PhysioNet/CinC 2020). Python 3.9+
+#   pip install -r requirements.txt
+#   torch — отдельно под свою платформу (см. ниже)
+
+# Ядро
+numpy>=1.24
+scipy>=1.10
+pandas>=2.0
+matplotlib>=3.6
+tqdm>=4.65
+
+# Пайплайн 1: делинеация + оценка качества сигнала
+neurokit2>=0.2.7
+
+# Пайплайны 2/3: обучение CTN (локальный CUDA)
+#   CUDA 12.1: pip install torch --index-url https://download.pytorch.org/whl/cu121
+#   CPU:       pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.0
+
+# Извлечение ручных фич (extract_features.py + пакет feats)
+biosppy>=1.0
+peakutils>=2.3
+PyWavelets>=1.4
+pyentrp>=0.7
+scikit-learn>=1.2
