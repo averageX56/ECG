@@ -193,7 +193,9 @@ def _dev(arr):
 def compute_interval_features(rec: dict, pipeline=None, lead_index=0) -> dict:
     delin = delineate_full(rec, pipeline=pipeline, lead_index=lead_index)
     f = {'record_id': rec.get('record_id'), 'dataset': rec.get('dataset'),
-         'sex': rec.get('sex'), 'n_beats': len(delin.get('r_peaks') or []),
+         'sex': rec.get('sex'), 'age': rec.get('age'),
+         'quality_label': delin.get('quality_label'),
+         'n_beats': len(delin.get('r_peaks') or []),
          'delineation_error': delin.get('error'),
          'rr_ms': None, 'rr_mad_ms': None, 'qrs_ms': None, 'qrs_mad_ms': None,
          'qt_ms': None, 'qt_mad_ms': None, 'pq_ms': None, 'pq_mad_ms': None, 'qtc_ms': None}
@@ -264,12 +266,38 @@ def run_pipeline(df: pd.DataFrame, pipeline=None, lead_index=0, limit=None) -> p
         f = compute_interval_features(rec, pipeline=pipeline, lead_index=lead_index)
         pred = set(diagnose_from_intervals(f))
         gt = ground_truth_labels(rec.get('dx_codes', []))
-        rows.append({**{k: f[k] for k in ('record_id', 'dataset', 'n_beats', 'rr_ms', 'rr_mad_ms',
-                                          'qrs_ms', 'qrs_mad_ms', 'qt_ms', 'qt_mad_ms', 'pq_ms',
-                                          'pq_mad_ms', 'qtc_ms', 'delineation_error')},
+        rows.append({**{k: f[k] for k in ('record_id', 'dataset', 'sex', 'age', 'quality_label',
+                                          'n_beats', 'rr_ms', 'rr_mad_ms', 'qrs_ms', 'qrs_mad_ms',
+                                          'qt_ms', 'qt_mad_ms', 'pq_ms', 'pq_mad_ms', 'qtc_ms',
+                                          'delineation_error')},
                      'predicted_labels': sorted(pred), 'ground_truth_labels': sorted(gt),
                      'true_positive': sorted(pred & gt), 'false_positive': sorted(pred - gt),
                      'false_negative': sorted(gt - pred)})
+    return pd.DataFrame(rows)
+
+
+def interval_feature_table(df: pd.DataFrame, pipeline=None, lead_index=0, limit=None) -> pd.DataFrame:
+    """Таблица интервальных фич neurokit по записям: record_id + nk_* столбцы
+    (rr/qrs/qt/pq медианы и MAD-девиации, qtc, число ударов). Используется
+    бустингом (решение 4) в дополнение к ручным фичам. Обычный последовательный
+    проход (делинеация каждой записи через neurokit)."""
+    records = df.to_dict('records')
+    if limit:
+        records = records[:limit]
+    try:
+        from tqdm.auto import tqdm
+        records = tqdm(records, desc='Интервальные фичи (neurokit)')
+    except Exception:
+        pass
+    rows = []
+    for rec in records:
+        f = compute_interval_features(rec, pipeline=pipeline, lead_index=lead_index)
+        rows.append({'record_id': f['record_id'],
+                     'nk_rr_ms': f['rr_ms'], 'nk_rr_mad_ms': f['rr_mad_ms'],
+                     'nk_qrs_ms': f['qrs_ms'], 'nk_qrs_mad_ms': f['qrs_mad_ms'],
+                     'nk_qt_ms': f['qt_ms'], 'nk_qt_mad_ms': f['qt_mad_ms'],
+                     'nk_pq_ms': f['pq_ms'], 'nk_pq_mad_ms': f['pq_mad_ms'],
+                     'nk_qtc_ms': f['qtc_ms'], 'nk_n_beats': f['n_beats']})
     return pd.DataFrame(rows)
 
 
