@@ -1,0 +1,440 @@
+{
+  "summary": {
+    "valid": {
+      "n_records": 4,
+      "reference_episodes": 9,
+      "candidate_recall": 0.1111111111111111,
+      "predicted_episodes": 2,
+      "false_candidates": 0,
+      "vt_reference_duration_s": 108.79444444444444,
+      "overlap_s": 3.3111111111111113
+    },
+    "test": {
+      "n_records": 23,
+      "reference_episodes": 21,
+      "candidate_recall": 0.3333333333333333,
+      "predicted_episodes": 9,
+      "false_candidates": 2,
+      "vt_reference_duration_s": 43.830555555555556,
+      "overlap_s": 7.305555555555555
+    }
+  },
+  "details": [
+    {
+      "record": "100",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "103",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "105",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 1,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 1,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": [
+        {
+          "start_sample": 439011,
+          "end_sample": 439384,
+          "n_beats": 3,
+          "rate_bpm": 115.81769436997321,
+          "observed_duration_s": 1.0361111111111112,
+          "type": "suspected_ventricular_tachycardia",
+          "confidence_min": 0.9286281052815989,
+          "criteria": ">=3 consecutive predicted V beats, mean rate >=100/min; ventricular origin not independently proven"
+        }
+      ]
+    },
+    {
+      "record": "108",
+      "split": "valid",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "111",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "113",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "114",
+      "split": "valid",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "117",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "121",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "123",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "200",
+      "split": "test",
+      "reference_episodes": 7,
+      "predicted_episodes": 1,
+      "retrieved_reference_episodes": 1,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 15.241666666666667,
+      "overlap_s": 0.9666666666666667,
+      "predicted_candidates": [
+        {
+          "start_sample": 226858,
+          "end_sample": 227206,
+          "n_beats": 3,
+          "rate_bpm": 124.13793103448276,
+          "observed_duration_s": 0.9666666666666667,
+          "type": "suspected_ventricular_tachycardia",
+          "confidence_min": 0.9885288064415229,
+          "criteria": ">=3 consecutive predicted V beats, mean rate >=100/min; ventricular origin not independently proven"
+        }
+      ]
+    },
+    {
+      "record": "201",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 1,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 1,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": [
+        {
+          "start_sample": 171883,
+          "end_sample": 172234,
+          "n_beats": 3,
+          "rate_bpm": 123.07692307692308,
+          "observed_duration_s": 0.975,
+          "type": "suspected_ventricular_tachycardia",
+          "confidence_min": 0.969296826045712,
+          "criteria": ">=3 consecutive predicted V beats, mean rate >=100/min; ventricular origin not independently proven"
+        }
+      ]
+    },
+    {
+      "record": "202",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "207",
+      "split": "valid",
+      "reference_episodes": 2,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 2.938888888888889,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "210",
+      "split": "test",
+      "reference_episodes": 2,
+      "predicted_episodes": 1,
+      "retrieved_reference_episodes": 1,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 5.727777777777778,
+      "overlap_s": 1.038888888888889,
+      "predicted_candidates": [
+        {
+          "start_sample": 389852,
+          "end_sample": 390226,
+          "n_beats": 3,
+          "rate_bpm": 115.50802139037435,
+          "observed_duration_s": 1.038888888888889,
+          "type": "suspected_ventricular_tachycardia",
+          "confidence_min": 0.986905890051342,
+          "criteria": ">=3 consecutive predicted V beats, mean rate >=100/min; ventricular origin not independently proven"
+        }
+      ]
+    },
+    {
+      "record": "212",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "213",
+      "split": "test",
+      "reference_episodes": 2,
+      "predicted_episodes": 1,
+      "retrieved_reference_episodes": 1,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 3.9416666666666664,
+      "overlap_s": 1.6666666666666667,
+      "predicted_candidates": [
+        {
+          "start_sample": 379302,
+          "end_sample": 379902,
+          "n_beats": 4,
+          "rate_bpm": 108.0,
+          "observed_duration_s": 1.6666666666666667,
+          "type": "suspected_ventricular_tachycardia",
+          "confidence_min": 0.9859282937345962,
+          "criteria": ">=3 consecutive predicted V beats, mean rate >=100/min; ventricular origin not independently proven"
+        }
+      ]
+    },
+    {
+      "record": "214",
+      "split": "test",
+      "reference_episodes": 2,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 4.55,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "219",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "221",
+      "split": "test",
+      "reference_episodes": 2,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 3.5,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "222",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "223",
+      "split": "valid",
+      "reference_episodes": 7,
+      "predicted_episodes": 2,
+      "retrieved_reference_episodes": 1,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 105.85555555555555,
+      "overlap_s": 3.3111111111111113,
+      "predicted_candidates": [
+        {
+          "start_sample": 221801,
+          "end_sample": 222195,
+          "n_beats": 3,
+          "rate_bpm": 109.64467005076143,
+          "observed_duration_s": 1.0944444444444446,
+          "type": "suspected_ventricular_tachycardia",
+          "confidence_min": 0.8927092212390342,
+          "criteria": ">=3 consecutive predicted V beats, mean rate >=100/min; ventricular origin not independently proven"
+        },
+        {
+          "start_sample": 224552,
+          "end_sample": 225350,
+          "n_beats": 5,
+          "rate_bpm": 108.27067669172932,
+          "observed_duration_s": 2.216666666666667,
+          "type": "suspected_ventricular_tachycardia",
+          "confidence_min": 0.8053127703098311,
+          "criteria": ">=3 consecutive predicted V beats, mean rate >=100/min; ventricular origin not independently proven"
+        }
+      ]
+    },
+    {
+      "record": "228",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "231",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "232",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    },
+    {
+      "record": "233",
+      "split": "test",
+      "reference_episodes": 6,
+      "predicted_episodes": 4,
+      "retrieved_reference_episodes": 4,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 10.869444444444444,
+      "overlap_s": 3.6333333333333333,
+      "predicted_candidates": [
+        {
+          "start_sample": 9983,
+          "end_sample": 10339,
+          "n_beats": 3,
+          "rate_bpm": 121.34831460674157,
+          "observed_duration_s": 0.9888888888888889,
+          "type": "suspected_ventricular_tachycardia",
+          "confidence_min": 0.980286345323171,
+          "criteria": ">=3 consecutive predicted V beats, mean rate >=100/min; ventricular origin not independently proven"
+        },
+        {
+          "start_sample": 211644,
+          "end_sample": 211970,
+          "n_beats": 3,
+          "rate_bpm": 132.5153374233129,
+          "observed_duration_s": 0.9055555555555556,
+          "type": "suspected_ventricular_tachycardia",
+          "confidence_min": 0.9759991461856593,
+          "criteria": ">=3 consecutive predicted V beats, mean rate >=100/min; ventricular origin not independently proven"
+        },
+        {
+          "start_sample": 485390,
+          "end_sample": 485721,
+          "n_beats": 3,
+          "rate_bpm": 130.51359516616313,
+          "observed_duration_s": 0.9194444444444444,
+          "type": "suspected_ventricular_tachycardia",
+          "confidence_min": 0.9151501733222945,
+          "criteria": ">=3 consecutive predicted V beats, mean rate >=100/min; ventricular origin not independently proven"
+        },
+        {
+          "start_sample": 631488,
+          "end_sample": 631783,
+          "n_beats": 3,
+          "rate_bpm": 146.4406779661017,
+          "observed_duration_s": 0.8194444444444444,
+          "type": "suspected_ventricular_tachycardia",
+          "confidence_min": 0.9942757122148427,
+          "criteria": ">=3 consecutive predicted V beats, mean rate >=100/min; ventricular origin not independently proven"
+        }
+      ]
+    },
+    {
+      "record": "234",
+      "split": "test",
+      "reference_episodes": 0,
+      "predicted_episodes": 0,
+      "retrieved_reference_episodes": 0,
+      "false_candidate_episodes": 0,
+      "reference_duration_s": 0,
+      "overlap_s": 0,
+      "predicted_candidates": []
+    }
+  ],
+  "protocol": "Fixed >=3 V at >=100bpm and V score >=0.8; retrieval uses any temporal overlap; no thresholds tuned on these episode labels.",
+  "limitation": "Very few VT episodes. Candidate retrieval is not a validated VT diagnostic classifier; rate/morphology cannot rule out aberrant SVT."
+}

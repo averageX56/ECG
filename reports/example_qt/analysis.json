@@ -1,0 +1,91 @@
+{
+  "record_id": "sele0104",
+  "fs": 250.0,
+  "leads": [
+    "D3",
+    "D4"
+  ],
+  "unit": "mV",
+  "metadata": {
+    "age": "47  Sex: M",
+    "recorder type": "ICR model 7200",
+    "produced by xform from record e0104, beginning at 1": "35:00.000",
+    "sample_start": 150000
+  },
+  "start_seconds": 600.0,
+  "analyzed_duration_seconds": 10.0,
+  "interval_features": {
+    "D3": {
+      "p_ms_median": 104.0,
+      "p_ms_iqr": 4.0,
+      "p_ms_count": 11,
+      "qrs_ms_median": 84.0,
+      "qrs_ms_iqr": 6.0,
+      "qrs_ms_count": 10,
+      "t_ms_median": 160.0,
+      "t_ms_iqr": 12.0,
+      "t_ms_count": 9,
+      "pr_ms_median": 160.0,
+      "pr_ms_iqr": 4.0,
+      "pr_ms_count": 10,
+      "qt_ms_median": 444.0,
+      "qt_ms_iqr": 8.0,
+      "qt_ms_count": 9,
+      "qtc_fridericia_ms_median": 433.49788300030826,
+      "qtc_fridericia_ms_iqr": 13.968386184287397,
+      "qtc_fridericia_ms_count": 8,
+      "rr_ms_median": 1060.0,
+      "rr_ms_iqr": 12.0,
+      "rr_ms_count": 9,
+      "rr_cv": 0.017012279398779383,
+      "rmssd_ms": 25.258661880630203,
+      "qrs_ge_120_fraction": 0.0
+    },
+    "D4": {
+      "p_ms_median": 104.0,
+      "p_ms_iqr": 6.0,
+      "p_ms_count": 10,
+      "qrs_ms_median": 88.0,
+      "qrs_ms_iqr": 4.0,
+      "qrs_ms_count": 10,
+      "t_ms_median": 220.0,
+      "t_ms_iqr": 36.0,
+      "t_ms_count": 9,
+      "pr_ms_median": 160.0,
+      "pr_ms_iqr": 6.0,
+      "pr_ms_count": 10,
+      "qt_ms_median": 400.0,
+      "qt_ms_iqr": 48.0,
+      "qt_ms_count": 9,
+      "qtc_fridericia_ms_median": 392.5937684164983,
+      "qtc_fridericia_ms_iqr": 29.05826558451747,
+      "qtc_fridericia_ms_count": 8,
+      "rr_ms_median": 1060.0,
+      "rr_ms_iqr": 12.0,
+      "rr_ms_count": 9,
+      "rr_cv": 0.01774432191610378,
+      "rmssd_ms": 27.239676943752496,
+      "qrs_ge_120_fraction": 0.0
+    }
+  },
+  "record_predictions": {},
+  "record_status": "unsupported_record_lead_set; use beat results",
+  "unsupported_training_labels": {},
+  "beat_status": "unvalidated_transfer_from_MLII",
+  "reference_lead": "D3",
+  "beat_counts": {
+    "N": 9
+  },
+  "vt_candidates": [],
+  "af_form": "not_determined_without_clinical_history",
+  "conduction_assessment": {
+    "qrs_ge_120_fraction": 0.0,
+    "clinical_criticality": "not_determined_from_QRS_duration_alone",
+    "note": "Per-lead widths, not global earliest-onset/latest-offset QRS; boundary error can change the 120ms flag."
+  },
+  "provenance": {
+    "delineator": "artifacts/delineator_qt.pt",
+    "record_model": "artifacts\\record_models\\interval.joblib",
+    "beat_model": "artifacts\\beat_models\\fusion.joblib"
+  }
+}

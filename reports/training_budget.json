@@ -1,0 +1,56 @@
+{
+  "total_seconds": 1136.1539611000017,
+  "limit_seconds": 10800,
+  "within_budget": true,
+  "runs": {
+    "artifacts\\delineator.budget.json": {
+      "seconds": 174.36778940000022,
+      "device": "cuda",
+      "max_cuda_bytes": 59863552,
+      "parameters": 214408,
+      "epochs": 30
+    },
+    "artifacts\\delineator_transfer.budget.json": {
+      "seconds": 143.5520531000002,
+      "device": "cuda",
+      "max_cuda_bytes": 115893248
+    },
+    "artifacts\\delineator_qt.budget.json": {
+      "seconds": 114.31401190000088,
+      "device": "cuda",
+      "max_cuda_bytes": 100715008
+    },
+    "artifacts\\record_models_baseline\\budget.json": {
+      "seconds": 245.51891979999982,
+      "per_mode_seconds": {
+        "interval": 17.123989400000028,
+        "waveform": 103.0911200999999,
+        "fusion": 117.26740680000057
+      }
+    },
+    "artifacts\\record_models\\budget.json": {
+      "seconds": 230.96862540000075,
+      "per_mode_seconds": {
+        "interval": 16.92521719999968,
+        "waveform": 84.71263650000037,
+        "fusion": 89.48268800000005
+      }
+    },
+    "artifacts\\beat_models\\budget.json": {
+      "seconds": 69.34943980000025,
+      "per_mode_seconds": {
+        "interval": 5.790343700000449,
+        "waveform": 20.508560500000385,
+        "fusion": 18.790851399999156
+      }
+    },
+    "artifacts\\beat_models\\cnn_budget.json": {
+      "seconds": 91.1141891999996,
+      "device": "cuda",
+      "max_cuda_bytes": 63853568
+    },
+    "artifacts/context_experiments/budget.json": {
+      "seconds": 66.96893249999994
+    }
+  }
+}

@@ -1,2 +1,4 @@
 data/
 LUDB/
+artifacts/
+.pytest_cache/

@@ -1,0 +1,47 @@
+{
+  "seed": 42,
+  "training_budget_minutes_total": 180,
+  "delineation": {
+    "epochs": 30,
+    "max_minutes": 25,
+    "batch_size": 16,
+    "fs": 250,
+    "train_patients": 140,
+    "valid_patients": 30,
+    "test_patients": 30
+  },
+  "record_classification": {
+    "max_minutes": 45,
+    "max_iter": 100,
+    "max_leaf_nodes": 15,
+    "validation": "PTB-XL fold 9",
+    "test": "PTB-XL fold 10",
+    "external": "Georgia",
+    "exploratory_limit_per_source_split": 500
+  },
+  "beat_classification": {
+    "max_minutes": 40,
+    "max_iter": 100,
+    "split": "de Chazal modified: 201 and 202 together; validation 108,114,207,223"
+  },
+  "qrs_wide_threshold_ms": 120,
+  "vt_candidate": {
+    "min_consecutive_v": 3,
+    "min_rate_bpm": 100,
+    "min_model_score": 0.8
+  },
+  "notes": "Descriptive experiment manifest. CLI flags are authoritative; training time budgets are checked separately and summarized by scripts/make_report.py.",
+  "beat_cnn": {
+    "epochs": 25,
+    "max_minutes": 20,
+    "selection": "validation macro F1 N,S,V,F"
+  },
+  "consistency_adaptation": {
+    "epochs": 12,
+    "max_minutes": 20
+  },
+  "qt_adaptation": {
+    "epochs": 10,
+    "max_minutes": 15
+  }
+}

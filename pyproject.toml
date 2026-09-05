@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ecg-interval-research"
+version = "0.1.0"
+description = "ECG delineation, interval and beat waveform classification"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.26", "scipy>=1.12", "pandas>=2.1", "scikit-learn>=1.6", "torch>=2.2", "wfdb>=4.1", "neurokit2>=0.2.12", "matplotlib>=3.8", "joblib>=1.3"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "nbformat>=5", "nbclient>=0.10", "ipykernel>=6"]
+
+[project.scripts]
+ecg = "ecg_project.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["ecg_project*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
