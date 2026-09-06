@@ -67,10 +67,10 @@ class ResidentBatches:
 def tune_batch(model,dim,length,device,dtype,initial=32,maximum=1024):
     """Probe forward/backward, retaining VRAM headroom for Adam and validation."""
     if device!='cuda':return initial
-    rng=torch.get_rng_state();cuda_rng=torch.cuda.get_rng_state_all();best=initial
+    rng=torch.get_rng_state();cuda_rng=torch.cuda.get_rng_state_all();best=None
     total=torch.cuda.get_device_properties(0).total_memory
     try:
-        for batch in [2**k for k in range(5,11)]:
+        for batch in [2**k for k in range(0,11)]:
             if batch>maximum:break
             try:
                 torch.cuda.empty_cache();torch.cuda.reset_peak_memory_stats()
@@ -86,6 +86,7 @@ def tune_batch(model,dim,length,device,dtype,initial=32,maximum=1024):
                 model.zero_grad(set_to_none=True);torch.cuda.empty_cache();break
     finally:
         torch.set_rng_state(rng);torch.cuda.set_rng_state_all(cuda_rng);model.zero_grad(set_to_none=True);torch.cuda.empty_cache()
+    if best is None:raise RuntimeError('Even microbatch 1 exceeds the memory allowance; reduce model size.')
     return best
 
 
@@ -133,8 +134,15 @@ def train_cluster(config:ClusterConfig):
     token_path=out/'tokens.joblib'
     latest=out/'latest.pt'
     if latest.exists() and not cfg.resume:raise FileExistsError('Use a new output directory or resume=True')
-    # Refit deterministic train-only tokens, then verify resume identity.
-    tokens=fit_tokens(records);joblib.dump(tokens,token_path)
+    # Validate checkpoint identity before mutating any files in an existing run.
+    saved=None
+    if latest.exists():
+        saved=torch.load(latest,map_location='cpu',weights_only=True)
+        identity_keys=['dim','layers','radius','seed','batch_size','accumulation','learning_rate','pretrain_epochs','max_batches','amp','gpu_resident']
+        if saved['data_hash']!=data_hash or any(saved['config'].get(k)!=asdict(cfg)[k] for k in identity_keys):
+            raise ValueError('Resume config or data differs; choose a fresh output directory')
+    tokens=fit_tokens(records)
+    if saved is None:joblib.dump(tokens,token_path)
     model=BeatBERT(54,cfg.dim,cfg.layers,2*cfg.radius+1).to(device)
     optimizer=torch.optim.AdamW(model.parameters(),lr=cfg.learning_rate,weight_decay=.01)
     amp=cfg.amp and device=='cuda'
@@ -146,11 +154,7 @@ def train_cluster(config:ClusterConfig):
     if cfg.auto_batch and device=='cuda' and not latest.exists():
         actual_batch=tune_batch(model,54,2*cfg.radius+1,device,dtype)
         print('Selected microbatch',actual_batch,flush=True)
-    if latest.exists():
-        saved=torch.load(latest,map_location=device,weights_only=True)
-        identity_keys=['dim','layers','radius','seed','batch_size','accumulation','learning_rate','pretrain_epochs','max_batches']
-        if saved['data_hash']!=data_hash or any(saved['config'][k]!=asdict(cfg)[k] for k in identity_keys):
-            raise ValueError('Resume config or data differs; choose a fresh output directory')
+    if saved is not None:
         model.load_state_dict(saved['model']);optimizer.load_state_dict(saved['optimizer']);scaler.load_state_dict(saved['scaler'])
         state=saved['state'];history=saved['history'];torch.set_rng_state(saved['torch_rng'].cpu())
         actual_batch=saved['actual_batch']
@@ -165,6 +169,7 @@ def train_cluster(config:ClusterConfig):
         _atomic_save(dict(model=model.state_dict(),optimizer=optimizer.state_dict(),scaler=scaler.state_dict(),
             state=state.copy(),history=history,config=asdict(cfg),actual_batch=actual_batch,data_hash=data_hash,torch_rng=torch.get_rng_state(),
             python_rng=random.getstate(),cuda_rng=torch.cuda.get_rng_state_all() if device=='cuda' else []),latest)
+    if saved is None:checkpoint()  # Resume is also possible after interrupting the first epoch.
     while state['stage']!='complete':
         pretrain=state['stage']=='pretrain';epochs=cfg.pretrain_epochs if pretrain else cfg.finetune_epochs
         if state['epoch']>=epochs:

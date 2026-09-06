@@ -59,14 +59,12 @@ python scripts/make_report.py
 
 Три варианта классификации сохранены отдельно: `interval.joblib`, `waveform.joblib`, `fusion.joblib`. Waveform у классификатора битов — реальные отсчёты фиксированного окна; у классификатора записи — свёртки медианного и наиболее отличающегося бита по отведениям. Отчёты содержат AUROC/AUPRC и пороги по классам, confusion matrices, учёт ошибок детектора, совместную встречаемость меток train. `joblib`/PyTorch checkpoints следует загружать из созданных здесь доверенных артефактов.
 
-Дополнительная ветвь `cnn_fusion.joblib` обучает компактный Conv1D encoder формы бита совместно с интервальными признаками. Imputation/scaling обучаются только на train, эпоха и выбор среди четырёх моделей — только на validation. Максимальный бюджет этой ветви 20 минут; её фактический результат сравнивается с бустингом в третьем ноутбуке.
+Дополнительная ветвь `cnn_fusion.joblib` обучает компактный Conv1D encoder формы бита совместно с интервальными признаками. Imputation/scaling обучаются только на train, эпоха и выбор среди четырёх моделей — только на validation. Максимальный бюджет этой ветви 20 минут; её фактический результат сравнивается с бустингом в едином ноутбуке.
 
 ## Ноутбуки и структура
 
-1. [01_data_audit.ipynb](notebooks/01_data_audit.ipynb): состав файлов, метки, единицы, patient splits.
-2. [02_delineation_transfer.ipynb](notebooks/02_delineation_transfer.ipynb): разметка, графики, LUDB/QT и шумовые абляции.
-3. [03_classification.ipynb](notebooks/03_classification.ipynb): три ветви, редкие классы, корреляции меток и ошибки.
+[04_all_pipelines_a100.ipynb](notebooks/04_all_pipelines_a100.ipynb) — единый ноутбук: аудит, обучение, графики разметки и аналитика классификации.
 
-`ecg_project/io.py` отвечает за форматы; `signal.py` — DSP и интервалы; `segmentation.py`, `adaptation.py`, `qtdb.py` — разметчики и перенос; `features.py`, `record_model.py`, `beats.py` — классификация; `analysis.py`, `episodes.py` — анализ записи; `metrics.py`, `benchmark.py`, `robustness.py` — проверка качества. Существовавшие удаления старого кода в Git и исходный `ludb_beats_dataset.ipynb` сохранены.
+Код организован по областям ответственности: `data`, `processing`, `models`, `training`, `evaluation`, `experiments`, `workflows`. Подробная навигация: [docs/STRUCTURE.md](docs/STRUCTURE.md). Датасеты, веса и сгенерированные примеры хранятся локально и не входят в Git.
 
 Проект различает наличие меток и их отсутствие. ЖТ, ЖЭС/НадЖЭС, ФП, АВ-блокады и внутрижелудочковые нарушения представлены в целевом mapping; редкие/неподтверждённые возможности явно отражены в отчёте, без выдуманных метрик или диагноза по одному QRS.

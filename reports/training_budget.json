@@ -1,5 +1,5 @@
 {
-  "total_seconds": 1136.1539611000017,
+  "total_seconds": 1667.7720970000018,
   "limit_seconds": 10800,
   "within_budget": true,
   "runs": {
@@ -49,8 +49,20 @@
       "device": "cuda",
       "max_cuda_bytes": 63853568
     },
-    "artifacts/context_experiments/budget.json": {
+    "artifacts\\context_experiments\\budget.json": {
       "seconds": 66.96893249999994
+    },
+    "artifacts\\representation_experiments\\budget.json": {
+      "seconds": 409.4852762999999,
+      "reservation_minutes": 35,
+      "device": "cuda",
+      "max_cuda_bytes": 73752576
+    },
+    "artifacts\\founder_experiments\\budget.json": {
+      "seconds": 122.1328596000003,
+      "reservation_minutes": 25,
+      "device": "cuda",
+      "max_cuda_bytes": 439116800
     }
   }
 }
