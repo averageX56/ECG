@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 from ecg_project.data.io import header
 from ecg_project.utils import save_json
+from tqdm.auto import tqdm
 
 TARGETS = {
     'AF': ['164889003','282825002','426749004','314208002'],
@@ -19,13 +20,20 @@ TARGETS = {
 }
 
 def audit(root='.', output='artifacts/catalog.csv'):
-    root=Path(root); rows=[]; summaries={}
-    ptbpath=root/'artifacts/ptbxl_database.csv'
-    ptb=pd.read_csv(ptbpath).set_index('ecg_id') if ptbpath.exists() else None
-    for directory in [root/'LUDB', *sorted((root/'data').iterdir())]:
-        if not directory.is_dir():continue
-        counts=Counter(); dx=Counter(); bad=0
-        for p in sorted(directory.glob('*.hea')):
+    directories = [root / "LUDB", *sorted((root / "data").iterdir())]
+
+    for directory in tqdm(directories, desc="Datasets", unit="dataset"):
+        if not directory.is_dir():
+            continue
+
+        paths = sorted(directory.glob("*.hea"))
+
+        for p in tqdm(
+            paths,
+            desc=directory.name,
+            unit="record",
+            leave=False,
+        ):
             h=header(p); codes=h['labels']; meta=h['metadata']
             data=p.parent/h['channels'][0][0]
             source=directory.name

@@ -9,6 +9,7 @@ from ecg_project.processing.features import beat_features
 from ecg_project.processing.signal import preprocess,rpeaks
 from ecg_project.data.catalog import file_hash
 from ecg_project.utils import save_json
+import tqdm.auto as tqdm
 
 
 def prepare(output='artifacts/unlabeled_beats',limit=0,checkpoint='artifacts/delineator_qt.pt',device='cuda'):
@@ -17,7 +18,7 @@ def prepare(output='artifacts/unlabeled_beats',limit=0,checkpoint='artifacts/del
     frame=catalog[(catalog.source=='Training_2') & (catalog.readable==True) & (catalog.has_labels==False)].sort_values('record_id')
     if limit:frame=frame.head(limit)
     predictor=Predictor(checkpoint,device=device);digest=file_hash(checkpoint);rows=[];start=time.monotonic()
-    for _,row in frame.iterrows():
+    for _,row in tqdm.tqdm(frame.iterrows(),total=len(frame)):
         name='unlabeled_Training2_'+str(row.record_id);path=out/(name+'.npz')
         if path.exists():
             with np.load(path) as z:
@@ -30,7 +31,6 @@ def prepare(output='artifacts/unlabeled_beats',limit=0,checkpoint='artifacts/del
             if not n:continue
             np.savez_compressed(path,waveform=w,interval=f,labels=np.full(n,-1,dtype=int),peaks=peaks[ids],model_hash=digest)
         rows.append(dict(record=name,patient=name,split='train',reference_classes={},cropped=n,source='Training_2_unlabelled',lead='II_or_first'))
-        if len(rows)%50==0:print('Unlabelled',len(rows),flush=True)
     save_json(out/'manifest.json',rows);save_json(out/'extraction.json',dict(records=len(rows),seconds=time.monotonic()-start,
         limitation='Lead II is not MLII; used for masked pretraining only. Unknown source patient IDs; source training-only.'))
     return out

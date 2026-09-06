@@ -12,6 +12,7 @@ from ecg_project.processing.features import extract_record
 from ecg_project.models.segmentation import Predictor
 from ecg_project.utils import seed_all,save_json
 from ecg_project.evaluation.metrics import multilabel_metrics,thresholds_on_validation
+from tqdm.auto import tqdm
 
 def prepare(catalog='artifacts/catalog.csv',output='artifacts/record_features',limit=0,device='cpu',checkpoint='artifacts/delineator.pt'):
     seed_all();frame=pd.read_csv(catalog).fillna('');frame=frame[(frame.source!='LUDB') & (frame.readable==True) & (frame.has_labels==True)].copy()
@@ -30,7 +31,14 @@ def prepare(catalog='artifacts/catalog.csv',output='artifacts/record_features',l
     assert_disjoint(frame)
     out=Path(output);out.mkdir(parents=True,exist_ok=True)
     predictor=Predictor(checkpoint,device=device);rows=[];fail=[];start=time.monotonic();model_hash=file_hash(checkpoint)
-    for k,(_,row) in enumerate(frame.iterrows()):
+    iterator = tqdm(
+        frame.iterrows(),
+        total=len(frame),
+        desc="Record features",
+        unit="record",
+    )
+
+    for k, (_, row) in enumerate(iterator):
         name=row.source+'_'+row.record_id;cache=out/(name+'.npz')
         try:
             p=Path(row.path);signal_path=p.with_suffix('.mat')
@@ -51,7 +59,6 @@ def prepare(catalog='artifacts/catalog.csv',output='artifacts/record_features',l
         except Exception as e:
             fail.append(dict(record=name,error=repr(e)));print('ERROR',name,repr(e),flush=True)
         if (k+1)%100==0:
-            print(f'Features {k+1}/{len(frame)}; {time.monotonic()-start:.1f}s; failures={len(fail)}',flush=True)
             pd.DataFrame(rows).to_csv(out/'manifest.csv',index=False)
     result=pd.DataFrame(rows)
     # Exact duplicated payloads: keep the most protected split, drop training copies.
@@ -86,15 +93,29 @@ def train(manifest='artifacts/record_features/manifest.csv',output='artifacts/re
        per_source={s:frame.loc[tr & (frame.source==s),classes].astype(int).corr().to_dict() for s in frame.loc[tr,'source'].unique()},
        interpretation='Associations of recorded labels, not causal disease relationships; fitted on training only.'))
     results={};budgets={}
-    for mode,x in [('interval',fi),('waveform',wf),('fusion',np.concatenate([fi,wf],1))]:
+    for mode, x in tqdm(
+        [
+            ("interval", fi),
+            ("waveform", wf),
+            ("fusion", np.concatenate([fi, wf], 1)),
+        ],
+        desc="Record models",
+        unit="mode",
+    ):
         estimators=[];prob=np.zeros((len(frame),len(classes)));t0=time.monotonic()
-        for i,c in enumerate(classes):
+        for i, c in enumerate(
+            tqdm(
+                classes,
+                desc=mode,
+                unit="class",
+                leave=False,
+            )
+        ):
             if time.monotonic()-start>minutes*60:raise TimeoutError('Training budget reached before complete model; rerun with smaller max_iter.')
             # Fixed iterations: sklearn internal random early-stop split would violate patient grouping.
             model=HistGradientBoostingClassifier(max_iter=100,max_leaf_nodes=15,learning_rate=.08,l2_regularization=2,
                   class_weight='balanced',early_stopping=False,random_state=42)
             model.fit(x[tr],yt[:,i]);prob[:,i]=model.predict_proba(x)[:,1];estimators.append(model)
-            print(mode,c,'trained',round(time.monotonic()-t0,1),flush=True)
         thresholds=thresholds_on_validation(yv,prob[va]);budgets[mode]=time.monotonic()-t0
         bundle=dict(models=estimators,mode=mode,classes=classes,thresholds=thresholds,
            unsupported={c:int(frame.loc[tr,c].sum()) for c in allclasses if c not in classes},

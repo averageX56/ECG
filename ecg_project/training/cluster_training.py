@@ -13,6 +13,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 from ecg_project.experiments.representation_experiments import BeatBERT,Sequences,load_records,fit_tokens,score
 from ecg_project.utils import seed_all,save_json
+from itertools import islice
+from tqdm.auto import tqdm
 
 
 @dataclass
@@ -93,7 +95,12 @@ def tune_batch(model,dim,length,device,dtype,initial=32,maximum=1024):
 def infer(model,records,device,radius,batch_size=128):
     model.eval();prob=[];latent=[]
     with torch.no_grad():
-        for r in records:
+        for r in tqdm(
+            records,
+            desc="Inference",
+            unit="record",
+            leave=False,
+        ):
             n=len(r['x']);pp=[];ee=[]
             for start in range(0,n,batch_size):
                 ids=np.clip(np.arange(start,min(n,start+batch_size))[:,None]+np.arange(-radius,radius+1),0,n-1)
@@ -181,8 +188,20 @@ def train_cluster(config:ClusterConfig):
         ds=Sequences(records,'train',labeled=not pretrain,radius=cfg.radius)
         loader=ResidentBatches(records,cfg.radius,actual_batch,not pretrain,device) if cfg.gpu_resident else DataLoader(ds,batch_size=actual_batch,shuffle=True,num_workers=cfg.workers,pin_memory=device=='cuda')
         model.train();optimizer.zero_grad();losses=[]
-        n_batches=min(len(loader),cfg.max_batches) if cfg.max_batches else len(loader)
-        for k,(x,y) in enumerate(loader):
+        n_batches = (
+            min(len(loader), cfg.max_batches)
+            if cfg.max_batches
+            else len(loader)
+        )
+        batches = tqdm(
+            islice(loader, n_batches),
+            total=n_batches,
+            desc=f"{state['stage']} {state['epoch'] + 1}/{epochs}",
+            unit="batch",
+            leave=False,
+        )
+
+        for k,(x,y) in enumerate(batches):
             if k>=n_batches:break
             x=x.to(device);y=y.to(device)
             with torch.autocast(device_type=device,dtype=dtype,enabled=amp):

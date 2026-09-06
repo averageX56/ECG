@@ -14,6 +14,7 @@ from ecg_project.processing.signal import preprocess
 from ecg_project.evaluation.metrics import match_events
 from ecg_project.utils import save_json,seed_all
 from ecg_project.data.catalog import file_hash
+from tqdm.auto import tqdm
 
 def manual(path):
     """T onset is frequently unannotated and is retained as None, never invented."""
@@ -32,7 +33,13 @@ def entries(root,split):
 
 def evaluate(root='data/qtdb_external',checkpoint='artifacts/delineator.pt',output='reports/qtdb_baseline.json'):
     seed_all();predictor=Predictor(checkpoint);detail=[]
-    for row in entries(root,'external_valid'):
+    rows = entries(root, "external_valid")
+
+    for row in tqdm(
+        rows,
+        desc="QT external validation",
+        unit="record",
+    ):
         p=Path(root)/(row['record_id']+'.hea');ref=manual(p)
         lo=max(0,min(w['peak'] for w in ref)-1250);hi=max(w['offset'] for w in ref)+1250
         rec=load_record(p,start=lo,stop=hi);pred=predictor.predict(rec.signal,rec.fs)
@@ -62,7 +69,7 @@ def evaluate(root='data/qtdb_external',checkpoint='artifacts/delineator.pt',outp
 
 def qt_training(root):
     xs=[];ys=[];provenance=[]
-    for row in entries(root,'adapt_train'):
+    for row in tqdm(entries(root,'adapt_train'), desc="QT training", unit="record"):
         p=Path(root)/(row['record_id']+'.hea');r=load_record(p);waves=manual(p)
         x=preprocess(r.signal,r.fs);y=np.full(len(x),-100,np.int64)
         for w in waves:
@@ -88,9 +95,9 @@ def train(root='data/qtdb_external',initial='artifacts/delineator_transfer.pt',o
     model=Delineator().to(device);model.load_state_dict(torch.load(initial,map_location=device,weights_only=True)['state_dict'])
     opt=torch.optim.AdamW(model.parameters(),lr=.0001,weight_decay=.0001);lossfn=nn.CrossEntropyLoss(ignore_index=-100)
     best=-1;history=[];qi=iter(external)
-    for epoch in range(epochs):
+    for epoch in tqdm(range(epochs), desc="QT training"):
         model.train();losses=[]
-        for x,y in labeled:
+        for x,y in tqdm(labeled, desc="QT training batch", unit="batch"):
             if time.monotonic()-start>minutes*60:break
             try:ux,uy=next(qi)
             except StopIteration:qi=iter(external);ux,uy=next(qi)
@@ -98,7 +105,7 @@ def train(root='data/qtdb_external',initial='artifacts/delineator_transfer.pt',o
             opt.zero_grad();loss.backward();nn.utils.clip_grad_norm_(model.parameters(),5);opt.step();losses.append(loss.item())
         model.eval();cm=np.zeros((4,4),np.int64)
         with torch.no_grad():
-            for x,y in valid:
+            for x,y in tqdm(valid, desc="QT validation", unit="record"):
                 pp=model(x.to(device)).argmax(1).cpu().numpy();yy=y.numpy();ok=yy>=0
                 cm+=np.bincount(yy[ok]*4+pp[ok],minlength=16).reshape(4,4)
         dice=2*np.diag(cm)/np.maximum(cm.sum(0)+cm.sum(1),1)

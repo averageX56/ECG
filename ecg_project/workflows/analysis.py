@@ -48,7 +48,8 @@ def batch(manifest,output='reports/batch',checkpoint=None):
     return rows
 
 def analyze(path,output='reports/example',checkpoint=None,csv_fs=None,
-            lead=None,start_seconds=0,duration_seconds=None,device='cpu',make_plot=True,beat_model_path=None):
+            lead=None,start_seconds=0,duration_seconds=None,device='cpu',make_plot=True,beat_model_path=None,
+            hubert_run=None,hubert_model_root='artifacts/hubert_large',record_model_path=None):
     seed_all();p=Path(path);out=Path(output);out.mkdir(parents=True,exist_ok=True)
     checkpoint=checkpoint or ('artifacts/delineator_qt.pt' if Path('artifacts/delineator_qt.pt').exists() else 'artifacts/delineator.pt')
     if p.suffix=='.csv' and (Path('artifacts/mit_headers')/(p.stem+'.hea')).exists():
@@ -104,7 +105,7 @@ def analyze(path,output='reports/example',checkpoint=None,csv_fs=None,
     for ep in episodes:
         ep['start_s']=(ep['start_sample']+start)/rec.fs;ep['end_s']=(ep['end_sample']+start)/rec.fs
     record_predictions={};unsupported={};record_status='model_not_trained'
-    model=selected_path('artifacts/record_models')
+    model=Path(record_model_path) if record_model_path else selected_path('artifacts/record_models')
     if model and joblib.load(model)['feature_model_hash']!=file_hash(checkpoint):
         record_status='classifier_requires_features_from_its_training_delineator';model=None
     if model:
@@ -135,6 +136,9 @@ def analyze(path,output='reports/example',checkpoint=None,csv_fs=None,
              clinical_criticality='not_determined_from_QRS_duration_alone',
              note='Per-lead widths, not global earliest-onset/latest-offset QRS; boundary error can change the 120ms flag.'),
         provenance=dict(delineator=str(checkpoint),record_model=str(model) if model else None,beat_model=str(beat_model) if beat_model else None))
+    if hubert_run:
+        from ecg_project.training.hubert_lora import predict_record
+        result['hubert_predictions']=predict_record(rec,hubert_run,hubert_model_root,device)
     save_json(out/'analysis.json',result)
     if make_plot:
         import matplotlib

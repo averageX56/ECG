@@ -20,6 +20,7 @@ from ecg_project.data.io import load_record
 from ecg_project.data.catalog import TARGETS,file_hash
 from ecg_project.evaluation.metrics import multilabel_metrics,thresholds_on_validation
 from ecg_project.utils import seed_all,save_json
+from tqdm.auto import tqdm
 
 
 def founder_signal(path):
@@ -41,9 +42,8 @@ def prepare_full_ptb(output='artifacts/founder_full_inputs'):
     frame['split']=np.where(frame.fold==9,'valid','train')
     if not len(frame):raise ValueError('Run audit with official PTB patient metadata first')
     signals=np.lib.format.open_memmap(out/'signals.npy',mode='w+',dtype='float32',shape=(len(frame),5000))
-    for i,row in frame.iterrows():
+    for i,row in tqdm(frame.iterrows(),total=len(frame),desc="Processing PTB signals"):
         signals[i]=founder_signal(row.path)
-        if (i+1)%500==0:print('Full PTB',i+1,'/',len(frame),flush=True)
     signals.flush();frame.to_csv(out/'manifest.csv',index=False)
     return out
 
@@ -55,7 +55,7 @@ def prepare(output='artifacts/founder_experiments'):
     if set(frame.loc[frame.split=='train','patient_id']) & set(frame.loc[frame.split=='valid','patient_id']):
         raise ValueError('Patient overlap')
     signals=[];features=[]
-    for i,row in frame.iterrows():
+    for i,row in tqdm(frame.iterrows(),total=len(frame),desc="Processing founder inputs"):
         rec=load_record(row.path);x=rec.signal[:,rec.leads.index('I')].astype(float)
         if rec.fs!=500:
             from fractions import Fraction
@@ -111,7 +111,7 @@ def run(output='artifacts/founder_experiments',minutes=25):
             return result['macro_auroc']
         def hgb(name,x):
             models=[];prob=np.zeros_like(y)
-            for j,c in enumerate(classes):
+            for j,c in tqdm(enumerate(classes),total=len(classes),desc=f"Training {name}"):
                 guard();m=HistGradientBoostingClassifier(max_iter=100,max_leaf_nodes=15,early_stopping=False,class_weight='balanced',l2_regularization=3,random_state=42)
                 m.fit(x[tr],y[tr,j]);prob[:,j]=m.predict_proba(x)[:,1];models.append(m)
             joblib.dump(dict(models=models,classes=classes),out/(name+'.joblib'));evaluate(name,prob)
@@ -121,7 +121,7 @@ def run(output='artifacts/founder_experiments',minutes=25):
         # Cache activations before last stage. Frozen trunk saves memory and compute.
         activation=[]
         with torch.no_grad():
-            for i in range(0,len(signals),4):
+            for i in tqdm(range(0,len(signals),4),desc="Caching founder activations"):
                 x=torch.from_numpy(signals[i:i+4,None]).to(device)
                 z=model.first_activation(model.first_conv(x))
                 for stage in model.stage_list[:-1]:z=stage(z)
@@ -139,9 +139,9 @@ def run(output='artifacts/founder_experiments',minutes=25):
         criterion=nn.BCEWithLogitsLoss(pos_weight=pos)
         loader=DataLoader(TensorDataset(activation[tr],torch.from_numpy(y[tr])),batch_size=16,shuffle=True)
         best=-1;beststate=None
-        for epoch in range(12):
+        for epoch in tqdm(range(12),desc="Training founder"):
             last.train();head.train();losses=[]
-            for a,label in loader:
+            for a,label in tqdm(loader,desc="Training batches"):
                 guard();logits=head(last(a.to(device)).mean(-1));loss=criterion(logits,label.to(device))
                 optimizer.zero_grad();loss.backward();nn.utils.clip_grad_norm_(list(last.parameters())+list(head.parameters()),1);optimizer.step();losses.append(loss.item())
             last.eval();head.eval()

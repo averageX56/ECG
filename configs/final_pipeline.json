@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "models": {
+    "delineator": {
+      "path": "artifacts/delineator_qt.pt",
+      "sha256": "b448c9d1f92313593fb7d2811e2e640f1ac56a2e2fe8846b42ead789f517ec6c"
+    },
+    "record_classifier": {
+      "path": "artifacts/record_models/interval.joblib",
+      "sha256": "2c16801ab7e330a04bd2259759f1c2eeaa731cb1f39dbbd037f8a1bda447de4a"
+    },
+    "beat_classifier": {
+      "path": "artifacts/representation_experiments/scratch_bert.joblib",
+      "sha256": "1735625f5fa590b35fae2d0f91f93e14a9e1d55d2f25829555db260d3abbe1ec"
+    }
+  },
+  "qrs_wide_ms": 120,
+  "selection": {
+    "delineator": "LUDB validation boundary/wave metrics",
+    "record_classifier": "PTB fold9 macro AUROC 0.9044237589682492",
+    "beat_classifier": "MIT validation end-to-end macro F1 NSVF 0.5621288728018237"
+  },
+  "lora_enabled": false,
+  "limitations": [
+    "Research use; not clinically validated",
+    "Beat transfer outside MLII unvalidated",
+    "VT candidates have limited recall",
+    "AF form requires history",
+    "Rare AVB2/3 insufficient validation support"
+  ]
+}

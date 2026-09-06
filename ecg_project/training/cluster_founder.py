@@ -11,6 +11,8 @@ from ecg_project.training.cluster_training import _atomic_save
 from ecg_project.data.catalog import TARGETS,file_hash
 from ecg_project.evaluation.metrics import multilabel_metrics
 from ecg_project.utils import seed_all,save_json
+from tqdm.auto import tqdm
+from itertools import islice
 
 
 def train_founder_cluster(input_root='artifacts/founder_experiments',output='artifacts/cluster/founder_full',
@@ -48,10 +50,23 @@ def train_founder_cluster(input_root='artifacts/founder_experiments',output='art
         if device=='cuda':torch.cuda.set_rng_state_all([r.cpu() for r in saved['cuda_rng']])
     save_json(out/'config.json',dict(**config,epochs=epochs,train=int(tr.sum()),valid=int(va.sum()),unfrozen='all'))
     try:
-        for epoch in range(begin,epochs):
+        for epoch in tqdm(
+            range(begin, epochs),
+            initial=begin,
+            total=epochs,
+            desc="ECGFounder",
+            unit="epoch",
+        ):
             model.train();optimizer.zero_grad();losses=[];n=min(len(loader),max_batches) if max_batches else len(loader)
-            for k,(x,label) in enumerate(loader):
-                if k>=n:break
+            batches = tqdm(
+                islice(loader, n),
+                total=n,
+                desc=f"Train {epoch + 1}/{epochs}",
+                unit="batch",
+                leave=False,
+            )
+
+            for k, (x, label) in enumerate(batches):
                 with torch.autocast(device_type=device,dtype=torch.bfloat16,enabled=amp):
                     logits=model(x.to(device,non_blocking=True));loss=criterion(logits,label.to(device,non_blocking=True))
                     group=min(accumulation,n-(k//accumulation)*accumulation)
@@ -60,7 +75,15 @@ def train_founder_cluster(input_root='artifacts/founder_experiments',output='art
                     nn.utils.clip_grad_norm_(model.parameters(),1);optimizer.step();optimizer.zero_grad()
             model.eval();pp=[]
             with torch.no_grad():
-                for x in torch.from_numpy(np.array(signals[va,None])).split(batch_size):
+                valid_batches = torch.from_numpy(
+                    np.array(signals[va, None])
+                ).split(batch_size)
+                for x in tqdm(
+                    valid_batches,
+                    desc="Validation",
+                    unit="batch",
+                    leave=False,
+                ):
                     with torch.autocast(device_type=device,dtype=torch.bfloat16,enabled=amp):p=model(x.to(device)).sigmoid()
                     pp.append(p.float().cpu().numpy())
             prob=np.concatenate(pp);report=multilabel_metrics(y[va],prob,classes);metric=report['macro_auroc']

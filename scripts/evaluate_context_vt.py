@@ -14,6 +14,7 @@ seed_all()
 root=Path('artifacts/beat_features_qt')
 manifest=json.loads((root/'manifest.json').read_text())
 paths=[Path('artifacts/beat_models/fusion.joblib')]+list(Path('artifacts/context_experiments').glob('*.joblib'))
+paths += [p for p in [Path('artifacts/representation_experiments/scratch_bert.joblib')] if p.exists()]
 results={}
 for path in paths:
     bundle=joblib.load(path); model=bundle['model']

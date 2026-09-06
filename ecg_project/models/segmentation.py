@@ -11,6 +11,7 @@ from ecg_project.processing.signal import preprocess,resample
 from ecg_project.data.catalog import ludb_split
 from ecg_project.utils import save_json,seed_all
 from ecg_project.evaluation.metrics import event_metrics,summarize_events,match_events
+from tqdm.auto import tqdm
 
 def block(a,b):
     return nn.Sequential(nn.Conv1d(a,b,7,padding=3),nn.GroupNorm(4,b),nn.SiLU(),
@@ -39,7 +40,11 @@ def normalize(x):
 def prepare_ludb(root,split):
     paths=sorted(Path(root).glob('*.hea'),key=lambda p:int(p.stem)); mapping=ludb_split([p.stem for p in paths])
     xs=[];ys=[]
-    for p in paths:
+    for p in tqdm(
+        paths,
+        desc=f"LUDB {split}",
+        unit="record",
+    ):
         if mapping[p.stem]!=split:continue
         rec=load_record(p);x=normalize(resample(preprocess(rec.signal,rec.fs),rec.fs))
         for i,lead in enumerate(rec.leads):
@@ -67,9 +72,18 @@ def train(root='LUDB',output='artifacts/delineator.pt',epochs=35,minutes=35,devi
     weights=(counts.sum()/counts).sqrt();weights/=weights.mean()
     loss_fn=nn.CrossEntropyLoss(weight=weights.to(device),ignore_index=-100)
     best=-1;history=[];Path(output).parent.mkdir(parents=True,exist_ok=True)
-    for epoch in range(epochs):
+    for epoch in tqdm(
+        range(epochs),
+        desc="Delineator",
+        unit="epoch",
+    ):
         model.train();losses=[]
-        for x,y in train_loader:
+        for x, y in tqdm(
+            train_loader,
+            desc=f"Train {epoch + 1}/{epochs}",
+            unit="batch",
+            leave=False,
+        ):
             if time.monotonic()-start>minutes*60:break
             x=x.to(device);y=y.to(device)
             # Lead sign/gain augmentation, without changing temporal intervals.
@@ -80,7 +94,12 @@ def train(root='LUDB',output='artifacts/delineator.pt',epochs=35,minutes=35,devi
             nn.utils.clip_grad_norm_(model.parameters(),5);opt.step();losses.append(loss.item())
         model.eval();cm=np.zeros((4,4),dtype=np.int64)
         with torch.no_grad():
-            for x,y in valid_loader:
+            for x, y in tqdm(
+            valid_loader,
+            desc="Validation",
+            unit="batch",
+            leave=False,
+        ):
                 p=model(x.to(device)).argmax(1).cpu().numpy(); yy=y.numpy();ok=yy>=0
                 cm+=np.bincount(yy[ok]*4+p[ok],minlength=16).reshape(4,4)
         dice=2*np.diag(cm)/np.maximum(cm.sum(0)+cm.sum(1),1);score=dice[1:].mean()
@@ -138,7 +157,7 @@ class Predictor:
 def evaluate(root='LUDB',checkpoint='artifacts/delineator.pt',split='test',output='reports/segmentation_test.json'):
     predictor=Predictor(checkpoint);results=defaultdict(list);width_errors=[];width_labels=[];detail=[]
     paths=sorted(Path(root).glob('*.hea'));mapping=ludb_split([p.stem for p in paths])
-    for p in paths:
+    for p in tqdm(paths, desc=f"LUDB {split}", unit="record"):
         if mapping[p.stem]!=split:continue
         rec=load_record(p);pred=predictor.predict(rec.signal,rec.fs)
         for lead,waves in zip(rec.leads,pred):

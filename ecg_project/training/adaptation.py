@@ -12,6 +12,7 @@ from ecg_project.processing.signal import resample,preprocess
 from ecg_project.data.io import load_record
 from ecg_project.data.catalog import file_hash
 from ecg_project.utils import seed_all,save_json
+from tqdm.auto import tqdm
 
 def train(catalog='artifacts/catalog.csv',initial='artifacts/delineator.pt',output='artifacts/delineator_transfer.pt',
           epochs=12,minutes=20,unlabeled_records=200):
@@ -22,7 +23,7 @@ def train(catalog='artifacts/catalog.csv',initial='artifacts/delineator.pt',outp
     source=source.sample(n=min(len(source),unlabeled_records),random_state=42)
     if len(source)==0:raise ValueError('No eligible unlabeled training records')
     unlabeled=[];provenance=[]
-    for _,r in source.iterrows():
+    for _,r in tqdm(source.iterrows(), desc="Loading unlabeled records", unit="record"):
         rec=load_record(r.path,stop=min(int(r.n_samples),round(10*float(r.fs))))
         x=normalize(resample(preprocess(rec.signal,rec.fs),rec.fs))
         if len(x)<2500:continue
@@ -40,9 +41,13 @@ def train(catalog='artifacts/catalog.csv',initial='artifacts/delineator.pt',outp
     counts=torch.bincount(tr[1][tr[1]>=0],minlength=4).float();weights=(counts.sum()/counts).sqrt();weights/=weights.mean()
     loss_fn=nn.CrossEntropyLoss(weight=weights.to(device),ignore_index=-100)
     best=-1;history=[];ui=iter(u)
-    for epoch in range(epochs):
+    for epoch in tqdm(
+        range(epochs),
+        desc="Consistency adaptation",
+        unit="epoch",
+    ):
         model.train();losses=[];coverage=[]
-        for x,y in dl:
+        for x,y in tqdm(dl, desc=f"Epoch {epoch + 1}/{epochs}", unit="batch", leave=False):
             if time.monotonic()-start>minutes*60:break
             try:(ux,)=next(ui)
             except StopIteration:ui=iter(u);(ux,)=next(ui)
@@ -67,7 +72,7 @@ def train(catalog='artifacts/catalog.csv',initial='artifacts/delineator.pt',outp
             losses.append(loss.item());coverage.append(mask.float().mean().item())
         model.eval();cm=np.zeros((4,4),dtype=np.int64)
         with torch.no_grad():
-            for x,y in vl:
+            for x,y in tqdm(vl, desc=f"Validation", unit="batch", leave=False):
                 p=model(x.to(device)).argmax(1).cpu().numpy(); yy=y.numpy();ok=yy>=0
                 cm+=np.bincount(yy[ok]*4+p[ok],minlength=16).reshape(4,4)
         dice=2*np.diag(cm)/np.maximum(cm.sum(0)+cm.sum(1),1);score=dice[1:].mean()

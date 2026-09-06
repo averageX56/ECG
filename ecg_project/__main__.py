@@ -19,6 +19,13 @@ def main():
     p=sub.add_parser('train-beat-cnn');p.add_argument('--root',default='artifacts/beat_features_qt');p.add_argument('--epochs',type=int,default=25);p.add_argument('--minutes',type=float,default=20);p.add_argument('--output',default='artifacts/beat_models')
     p=sub.add_parser('analyze');p.add_argument('path');p.add_argument('--output',default='reports/example');p.add_argument('--checkpoint');p.add_argument('--csv-fs',type=float);p.add_argument('--lead');p.add_argument('--start-seconds',type=float,default=0);p.add_argument('--duration-seconds',type=float);p.add_argument('--device',default='cpu')
     p.add_argument('--beat-model-path')
+    p.add_argument('--hubert-run')
+    p.add_argument('--hubert-model-root',default='artifacts/hubert_large')
+    p=sub.add_parser('run',help='Run the pinned final ECG pipeline')
+    p.add_argument('path');p.add_argument('--output',default='reports/final_example')
+    p.add_argument('--pipeline',default='configs/final_pipeline.json');p.add_argument('--csv-fs',type=float)
+    p.add_argument('--lead');p.add_argument('--start-seconds',type=float,default=0);p.add_argument('--duration-seconds',type=float)
+    p.add_argument('--device',default='cpu')
     args=vars(parser.parse_args());command=args.pop('command')
     if command=='audit':from ecg_project.data.catalog import audit as run
     elif command=='benchmark-dwt':from ecg_project.evaluation.benchmark import benchmark_ludb as run
@@ -34,6 +41,7 @@ def main():
     elif command=='batch':from ecg_project.workflows.analysis import batch as run
     elif command=='evaluate-vt':from ecg_project.evaluation.episodes import evaluate as run
     elif command=='train-beat-cnn':from ecg_project.models.beat_cnn import train as run
+    elif command=='run':from ecg_project.workflows.final_pipeline import run
     else:from ecg_project.workflows.analysis import analyze as run
     run(**args)
 
