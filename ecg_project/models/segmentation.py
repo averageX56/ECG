@@ -37,27 +37,30 @@ def normalize(x):
     x=x-np.median(x,axis=0)
     return (x/np.maximum(np.std(x,axis=0),1e-5)).clip(-15,15).astype(np.float32)
 
+def _prepare_ludb_record(p):
+    xs=[];ys=[]
+    rec=load_record(p);x=normalize(resample(preprocess(rec.signal,rec.fs),rec.fs))
+    for i,lead in enumerate(rec.leads):
+        waves=annotations(p,lead)
+        if not waves:continue
+        y=np.full(len(x),-100,dtype=np.int64)
+        lo=round(min(w['onset'] for w in waves)*250/rec.fs)
+        hi=round(max(w['offset'] for w in waves)*250/rec.fs)
+        y[lo:hi+1]=0
+        for w in waves:
+            a=round(w['onset']*250/rec.fs);b=round(w['offset']*250/rec.fs)
+            y[a:b+1]={'P':1,'QRS':2,'T':3}[w['wave']]
+        xs.append(x[:,i][None]);ys.append(y)
+    return xs,ys
+
+
 def prepare_ludb(root,split):
     paths=sorted(Path(root).glob('*.hea'),key=lambda p:int(p.stem)); mapping=ludb_split([p.stem for p in paths])
     xs=[];ys=[]
-    for p in tqdm(
-        paths,
-        desc=f"LUDB {split}",
-        unit="record",
-    ):
-        if mapping[p.stem]!=split:continue
-        rec=load_record(p);x=normalize(resample(preprocess(rec.signal,rec.fs),rec.fs))
-        for i,lead in enumerate(rec.leads):
-            waves=annotations(p,lead)
-            if not waves:continue
-            y=np.full(len(x),-100,dtype=np.int64)
-            lo=round(min(w['onset'] for w in waves)*250/rec.fs)
-            hi=round(max(w['offset'] for w in waves)*250/rec.fs)
-            y[lo:hi+1]=0
-            for w in waves:
-                a=round(w['onset']*250/rec.fs);b=round(w['offset']*250/rec.fs)
-                y[a:b+1]={'P':1,'QRS':2,'T':3}[w['wave']]
-            xs.append(x[:,i][None]);ys.append(y)
+    from ecg_project.processing.parallel import ordered_map
+    paths=[p for p in paths if mapping[p.stem]==split]
+    for record_x,record_y in tqdm(ordered_map(_prepare_ludb_record,paths),total=len(paths),desc=f'LUDB {split}',unit='record'):
+        xs.extend(record_x);ys.extend(record_y)
     return torch.from_numpy(np.stack(xs)),torch.from_numpy(np.stack(ys))
 
 def train(root='LUDB',output='artifacts/delineator.pt',epochs=35,minutes=35,device='auto'):
@@ -154,9 +157,12 @@ class Predictor:
             out.append(sorted(waves,key=lambda w:w['onset']))
         return out
 
-def evaluate(root='LUDB',checkpoint='artifacts/delineator.pt',split='test',output='reports/segmentation_test.json'):
-    predictor=Predictor(checkpoint);results=defaultdict(list);width_errors=[];width_labels=[];detail=[]
+def evaluate(root='LUDB',checkpoint='artifacts/delineator.pt',split='test',output='reports/segmentation_test.json',predictor=None,limit=0):
+    predictor=predictor if predictor is not None else Predictor(checkpoint)
+    results=defaultdict(list);width_errors=[];width_labels=[];detail=[]
     paths=sorted(Path(root).glob('*.hea'));mapping=ludb_split([p.stem for p in paths])
+    paths=[p for p in paths if mapping[p.stem]==split]
+    if limit:paths=paths[:limit]
     for p in tqdm(paths, desc=f"LUDB {split}", unit="record"):
         if mapping[p.stem]!=split:continue
         rec=load_record(p);pred=predictor.predict(rec.signal,rec.fs)
@@ -173,8 +179,9 @@ def evaluate(root='LUDB',checkpoint='artifacts/delineator.pt',split='test',outpu
                         width_errors.append(pw-rw);width_labels.append((rw>=120,pw>=120))
     widths=np.array(width_labels)
     report=dict(split=split,summary={k:summarize_events(v) for k,v in results.items()},details=detail,
-       qrs_width=dict(mae_ms=np.mean(abs(np.array(width_errors))),bias_ms=np.mean(width_errors),
-       threshold_120_agreement=np.mean(widths[:,0]==widths[:,1]),matched_n=len(width_errors)),
+       qrs_width=dict(mae_ms=np.mean(abs(np.array(width_errors))) if width_errors else None,bias_ms=np.mean(width_errors) if width_errors else None,
+       threshold_120_agreement=np.mean(widths[:,0]==widths[:,1]) if len(widths) else None,matched_n=len(width_errors)),
+       record_limit=limit,
        per_lead={f'{lead}/{wave}':summarize_events([x for x in detail if x['lead']==lead and x['wave']==wave])
           for lead in sorted({x['lead'] for x in detail}) for wave in ('P','QRS','T')},
        protocol='Patient split seed42; evaluation limited to annotated envelope; 150ms one-to-one peak matching; widths on matched QRS only.')

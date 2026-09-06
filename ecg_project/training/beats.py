@@ -39,35 +39,44 @@ def load_mit(path):
     rec.unit='mV';rec.metadata['calibration_status']='official_header_checksum_verified'
     return rec
 
+def _prepare_one(p,output,checkpoint,device):
+    from ecg_project.processing.parallel import cached_predictor
+    predictor=cached_predictor(checkpoint,device);out=Path(output)
+    start=time.monotonic();model_hash=file_hash(checkpoint)
+    cache=out/(p.stem+'.npz');report_path=out/(p.stem+'.json')
+    if cache.exists():
+        with np.load(cache) as z:
+            if str(z['model_hash'])!=model_hash:raise ValueError('Stale beat features')
+        return json.loads(report_path.read_text())
+    rec=load_mit(p)
+    # MLII is not substituted for lead II in multilead models; this model is trained on MLII itself.
+    if 'MLII' not in rec.leads:raise ValueError(f'MLII absent: {p}')
+    ch=rec.leads.index('MLII');x=rec.signal[:,ch]
+    waves=predictor.predict(x,rec.fs)[0]
+    peaks,_=rpeaks(preprocess(x,rec.fs),rec.fs)
+    ref=[a for a in mit_annotations(p.with_name(p.stem+'annotations.txt')) if a['symbol'] in SYMBOL_MAP]
+    pairs=match_events([a['sample'] for a in ref],peaks,.15*rec.fs)
+    label_by_det={j:CLASSES.index(SYMBOL_MAP[ref[i]['symbol']]) for i,j in pairs}
+    crops,f,ids=beat_features(x,peaks,waves,rec.fs)
+    y=np.array([label_by_det.get(int(i),-1) for i in ids])
+    np.savez_compressed(cache,waveform=crops,interval=f,labels=y,peaks=peaks[ids],model_hash=model_hash)
+    row=dict(record=p.stem,patient='201_202' if p.stem in ['201','202'] else p.stem,split=split_for(p.stem),
+         references=len(ref),detected=len(peaks),matched=len(pairs),cropped=len(ids),labeled_crops=int((y>=0).sum()),
+         reference_classes=dict(Counter(SYMBOL_MAP[a['symbol']] for a in ref)),
+         seconds=time.monotonic()-start)
+    save_json(report_path,row);return row
+
+
 def prepare(root='data/mit-bih',output='artifacts/beat_features',device='cpu',checkpoint='artifacts/delineator.pt'):
-    seed_all();predictor=Predictor(checkpoint,device=device);out=Path(output);out.mkdir(parents=True,exist_ok=True)
-    summary=[];start=time.monotonic();model_hash=file_hash(checkpoint)
-    for p in sorted(Path(root).glob('*.csv')):
-        if int(p.stem) in PACED:continue
-        cache=out/(p.stem+'.npz');report_path=out/(p.stem+'.json')
-        if cache.exists():
-            with np.load(cache) as z:
-                if str(z['model_hash'])!=model_hash:raise ValueError('Stale beat features')
-            summary.append(json.loads(report_path.read_text()));continue
-        rec=load_mit(p)
-        # MLII is not substituted for lead II in multilead models; this model is trained on MLII itself.
-        if 'MLII' not in rec.leads:raise ValueError(f'MLII absent: {p}')
-        ch=rec.leads.index('MLII');x=rec.signal[:,ch]
-        waves=predictor.predict(x,rec.fs)[0]
-        peaks,_=rpeaks(preprocess(x,rec.fs),rec.fs)
-        ref=[a for a in mit_annotations(p.with_name(p.stem+'annotations.txt')) if a['symbol'] in SYMBOL_MAP]
-        pairs=match_events([a['sample'] for a in ref],peaks,.15*rec.fs)
-        label_by_det={j:CLASSES.index(SYMBOL_MAP[ref[i]['symbol']]) for i,j in pairs}
-        crops,f,ids=beat_features(x,peaks,waves,rec.fs)
-        y=np.array([label_by_det.get(int(i),-1) for i in ids])
-        np.savez_compressed(cache,waveform=crops,interval=f,labels=y,peaks=peaks[ids],model_hash=model_hash)
-        row=dict(record=p.stem,patient='201_202' if p.stem in ['201','202'] else p.stem,split=split_for(p.stem),
-             references=len(ref),detected=len(peaks),matched=len(pairs),cropped=len(ids),labeled_crops=int((y>=0).sum()),
-             reference_classes=dict(Counter(SYMBOL_MAP[a['symbol']] for a in ref)),
-             seconds=time.monotonic()-start)
-        save_json(report_path,row);summary.append(row);print(row,flush=True)
+    from functools import partial
+    from ecg_project.processing.parallel import ordered_map
+    seed_all();out=Path(output);out.mkdir(parents=True,exist_ok=True)
+    paths=[p for p in sorted(Path(root).glob('*.csv')) if int(p.stem) not in PACED]
+    function=partial(_prepare_one,output=output,checkpoint=checkpoint,device=device)
+    summary=list(ordered_map(function,paths,workers=None if device=='cpu' else 1))
     save_json(out/'manifest.json',summary)
     return summary
+
 
 def load_features(root):
     root=Path(root)

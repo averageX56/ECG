@@ -1,10 +1,12 @@
 /data/
 /LUDB/
 /artifacts/
+/reports/
 /.local_archive/
 /CONTINUATION.md
 /reports/example_*/
 /reports/notebook_*/
+/reports/final_*/
 .pytest_cache/
 __pycache__/
 *.py[cod]

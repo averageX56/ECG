@@ -103,7 +103,8 @@ def encode(model,records,device):
 
 def run(root='artifacts/beat_features_qt',output='artifacts/representation_experiments',minutes=35):
     seed_all();start=time.monotonic();out=Path(output);out.mkdir(parents=True,exist_ok=True)
-    ledger=json.loads(Path('reports/training_budget.json').read_text())
+    from ecg_project.training.local_budget import read_ledger
+    ledger=read_ledger()
     if ledger['total_seconds']+minutes*60>10800:raise RuntimeError('Requested reservation exceeds remaining 180-minute budget; ask user first.')
     device='cuda' if torch.cuda.is_available() else 'cpu';results={};history=[]
     def guard():

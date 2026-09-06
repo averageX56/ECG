@@ -12,13 +12,18 @@
     "beat_classifier": {
       "path": "artifacts/representation_experiments/scratch_bert.joblib",
       "sha256": "1735625f5fa590b35fae2d0f91f93e14a9e1d55d2f25829555db260d3abbe1ec"
+    },
+    "vt_candidate_classifier": {
+      "path": "artifacts/beat_models/fusion.joblib",
+      "sha256": "ad28a8f77915c64c59adc6115de347c4318e3042c0a8956052b053855fb07875"
     }
   },
   "qrs_wide_ms": 120,
   "selection": {
     "delineator": "LUDB validation boundary/wave metrics",
     "record_classifier": "PTB fold9 macro AUROC 0.9044237589682492",
-    "beat_classifier": "MIT validation end-to-end macro F1 NSVF 0.5621288728018237"
+    "beat_classifier": "MIT validation end-to-end macro F1 NSVF 0.5621288728018237",
+    "vt_candidate_classifier": "Fixed-rule MIT validation episode retrieval: fusion 1/9 vs BERT 0/9 at score 0.8; candidate only"
   },
   "lora_enabled": false,
   "limitations": [

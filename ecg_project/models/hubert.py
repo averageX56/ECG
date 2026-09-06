@@ -23,7 +23,30 @@ class HubertClassifier(nn.Module):
         return self.head(pooled)
 
 
-def load_backbone(root='artifacts/hubert_large'):
+def quantize_backbone(model):
+    """NF4 + double quantization of Linear layers; convolution/norm stay FP32.
+
+    Convert on CPU, then move to CUDA to initialize bitsandbytes quantization.
+    No downloaded Python or remote model loader is executed.
+    """
+    if not torch.cuda.is_available():
+        raise RuntimeError('QLoRA requires CUDA in this pipeline')
+    import bitsandbytes as bnb
+    dtype=torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float32
+    selected=[(name,m) for name,m in model.named_modules() if isinstance(m,nn.Linear)]
+    for name,base in selected:
+        # Replacement initialization must not change the subsequent adapter/head seed.
+        with torch.random.fork_rng(devices=[]):
+            layer=bnb.nn.Linear4bit(base.in_features,base.out_features,bias=base.bias is not None,
+                compute_dtype=dtype,compress_statistics=True,quant_type='nf4')
+        layer.load_state_dict(base.state_dict())
+        layer.requires_grad_(False)
+        path,_,leaf=name.rpartition('.')
+        setattr(model.get_submodule(path) if path else model,leaf,layer)
+    return model
+
+
+def load_backbone(root='artifacts/hubert_large',quantization='none'):
     from safetensors.torch import load_file
     from transformers import HubertConfig,HubertModel
     root=Path(root);raw=json.loads((root/'config.json').read_text())
@@ -34,4 +57,6 @@ def load_backbone(root='artifacts/hubert_large'):
     weights=load_file(str(root/'model.safetensors'))
     encoder={k:v for k,v in weights.items() if not k.startswith(('final_proj.','label_embedding.'))}
     model.load_state_dict(encoder,strict=True)
+    if quantization=='nf4':model=quantize_backbone(model)
+    elif quantization!='none':raise ValueError('Unknown quantization mode')
     return model

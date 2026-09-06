@@ -42,8 +42,9 @@ def prepare_full_ptb(output='artifacts/founder_full_inputs'):
     frame['split']=np.where(frame.fold==9,'valid','train')
     if not len(frame):raise ValueError('Run audit with official PTB patient metadata first')
     signals=np.lib.format.open_memmap(out/'signals.npy',mode='w+',dtype='float32',shape=(len(frame),5000))
-    for i,row in tqdm(frame.iterrows(),total=len(frame),desc="Processing PTB signals"):
-        signals[i]=founder_signal(row.path)
+    from ecg_project.processing.parallel import ordered_map
+    for i,signal in enumerate(tqdm(ordered_map(founder_signal,frame.path.tolist()),total=len(frame),desc="Processing PTB signals")):
+        signals[i]=signal
     signals.flush();frame.to_csv(out/'manifest.csv',index=False)
     return out
 
@@ -90,7 +91,8 @@ def load_founder():
 def run(output='artifacts/founder_experiments',minutes=25):
     seed_all();out=Path(output);start=time.monotonic()
     if not (out/'inputs.npz').exists():prepare(output)
-    ledger=json.loads(Path('reports/training_budget.json').read_text())
+    from ecg_project.training.local_budget import read_ledger
+    ledger=read_ledger()
     # Reserve both current jobs if the representation experiment has not entered ledger yet.
     reserve=35*60 if 'artifacts/representation_experiments/budget.json' not in ledger['runs'] else 0
     if ledger['total_seconds']+reserve+minutes*60>10800:raise RuntimeError('Training budget would be exceeded; ask user for approval.')

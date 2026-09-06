@@ -1,0 +1,11 @@
+{
+  "total_seconds": 1767.7292816000054,
+  "limit_seconds": 10800,
+  "within_budget": true,
+  "runs": {
+    "before_cleanup": {
+      "seconds": 1767.7292816000054
+    }
+  },
+  "note": "Historical local budget retained across cleanup; removed run artifacts do not reset the limit."
+}

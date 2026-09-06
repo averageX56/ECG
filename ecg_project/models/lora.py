@@ -12,12 +12,14 @@ class LoRALinear(nn.Module):
         self.base.requires_grad_(False)
         self.scale=alpha/rank
         self.dropout=nn.Dropout(dropout)
-        self.lora_A=nn.Parameter(torch.empty(rank,base.in_features,device=base.weight.device,dtype=base.weight.dtype))
-        self.lora_B=nn.Parameter(torch.zeros(base.out_features,rank,device=base.weight.device,dtype=base.weight.dtype))
+        dtype=base.weight.dtype if base.weight.is_floating_point() else torch.float32
+        self.lora_A=nn.Parameter(torch.empty(rank,base.in_features,device=base.weight.device,dtype=dtype))
+        self.lora_B=nn.Parameter(torch.zeros(base.out_features,rank,device=base.weight.device,dtype=dtype))
         nn.init.kaiming_uniform_(self.lora_A,a=math.sqrt(5))
     def forward(self,x):
-        update=torch.nn.functional.linear(torch.nn.functional.linear(self.dropout(x),self.lora_A),self.lora_B)
-        return self.base(x)+update*self.scale
+        update=torch.nn.functional.linear(torch.nn.functional.linear(self.dropout(x).to(self.lora_A.dtype),self.lora_A),self.lora_B)
+        base=self.base(x)
+        return base+update.to(base.dtype)*self.scale
 
 
 def inject_lora(model,rank=16,alpha=32,targets=('q_proj','v_proj'),dropout=.05):

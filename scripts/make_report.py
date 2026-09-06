@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 
 ROOT=Path(__file__).resolve().parents[1]
+(ROOT/'reports').mkdir(exist_ok=True)
 def read(p):return json.loads((ROOT/p).read_text(encoding='utf-8'))
 def fmt(v):return '—' if v is None else f'{v:.3f}'
 
@@ -59,12 +60,17 @@ if (ROOT/'artifacts/beat_models/metrics.json').exists():
 if (ROOT/'reports/vt_episodes.json').exists():
     lines+=['## Кандидаты ЖТ', '', '```json',json.dumps(read('reports/vt_episodes.json')['summary'],indent=2),'```', '',
     'Критерий: ≥3 подряд предсказанных V с оценкой ≥0.8 и частотой ≥100/мин. Оценка эпизодов использует любое временное пересечение и является оценкой поиска кандидатов, не диагностической точности механизма тахикардии.']
-budgets={}
+baseline=ROOT/'configs/local_budget.json'
+budgets=json.loads(baseline.read_text())['runs'].copy() if baseline.exists() else {}
 for p in [ROOT/'artifacts/delineator.budget.json',ROOT/'artifacts/delineator_transfer.budget.json',ROOT/'artifacts/delineator_qt.budget.json',ROOT/'artifacts/record_models_baseline/budget.json',ROOT/'artifacts/record_models/budget.json',ROOT/'artifacts/beat_models/budget.json',ROOT/'artifacts/beat_models/cnn_budget.json']:
     if p.exists():budgets[str(p.relative_to(ROOT))]=json.loads(p.read_text())
 for name in ['context_experiments','representation_experiments','founder_experiments']:
     extra=ROOT/'artifacts'/name/'budget.json'
     if extra.exists():budgets[str(extra.relative_to(ROOT))]=json.loads(extra.read_text())
+for pattern in ['hubert_local_*','qwen_local_*']:
+    for root in (ROOT/'artifacts').glob(pattern):
+        if (root/'budget.json').exists():budgets[str((root/'budget.json').relative_to(ROOT))]=json.loads((root/'budget.json').read_text())
+        elif (root/'run.json').exists():budgets[str((root/'run.json').relative_to(ROOT))]={'seconds':json.loads((root/'run.json').read_text())['seconds_this_invocation']}
 total=sum(d['seconds'] for d in budgets.values())
 lines+=['','## Ресурсы и практические ограничения','',f'Суммарное измеренное время обучения, включая пробный классификатор: **{total/60:.1f} мин**. Предобработка и инференс считаются отдельно. Бюджет обучения 180 минут; 4 ГБ GPU. Разметчик содержит 214 408 параметров.', '',
        '- QRS ≥120 мс — измеряемый признак, не достаточное правило ЖЭС или критичности блокады.',

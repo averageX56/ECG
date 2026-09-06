@@ -14,6 +14,31 @@ from ecg_project.utils import seed_all,save_json
 from ecg_project.evaluation.metrics import multilabel_metrics,thresholds_on_validation
 from tqdm.auto import tqdm
 
+def _prepare_one_record(row,output,checkpoint,device):
+    from ecg_project.processing.parallel import cached_predictor
+    predictor=cached_predictor(checkpoint,device);out=Path(output);model_hash=file_hash(checkpoint)
+    row=pd.Series(row)
+    name=row.source+'_'+row.record_id;cache=out/(name+'.npz')
+    try:
+        p=Path(row.path);signal_path=p.with_suffix('.mat')
+        digest=file_hash(signal_path)
+        header_digest=file_hash(p)
+        if cache.exists():
+            with np.load(cache) as cached:
+                if str(cached['model_hash'])!=model_hash or str(cached['signal_hash'])!=digest or str(cached['header_hash'])!=header_digest:
+                    raise ValueError('Stale cache: choose a fresh output directory after changing model/data.')
+        else:
+            # Long records: keep all windows in the analysis CLI; record benchmark uses first 30s and marks this.
+            rec=load_record(p,stop=round(min(30,float(row.duration_s))*float(row.fs)))
+            f,w,qc=extract_record(rec,predictor)
+            np.savez_compressed(cache,interval=np.array(list(f.values()),np.float32),waveform=np.array(list(w.values()),np.float32),
+                interval_names=np.array(list(f)),waveform_names=np.array(list(w)),signal_hash=digest,header_hash=header_digest,model_hash=model_hash)
+        item=row.to_dict();item.update(cache=str(cache),signal_hash=digest,analyzed_seconds=min(30,float(row.duration_s)))
+        return item,None
+    except Exception as e:
+        return None,dict(record=name,error=repr(e))
+
+
 def prepare(catalog='artifacts/catalog.csv',output='artifacts/record_features',limit=0,device='cpu',checkpoint='artifacts/delineator.pt'):
     seed_all();frame=pd.read_csv(catalog).fillna('');frame=frame[(frame.source!='LUDB') & (frame.readable==True) & (frame.has_labels==True)].copy()
     # Entire sources remain held out. Unknown identities never get random record splits.
@@ -30,36 +55,18 @@ def prepare(catalog='artifacts/catalog.csv',output='artifacts/record_features',l
         frame=pd.concat([sampled,rare]).drop_duplicates(['source','record_id'])
     assert_disjoint(frame)
     out=Path(output);out.mkdir(parents=True,exist_ok=True)
-    predictor=Predictor(checkpoint,device=device);rows=[];fail=[];start=time.monotonic();model_hash=file_hash(checkpoint)
-    iterator = tqdm(
-        frame.iterrows(),
-        total=len(frame),
-        desc="Record features",
-        unit="record",
-    )
-
-    for k, (_, row) in enumerate(iterator):
-        name=row.source+'_'+row.record_id;cache=out/(name+'.npz')
-        try:
-            p=Path(row.path);signal_path=p.with_suffix('.mat')
-            digest=file_hash(signal_path)
-            header_digest=file_hash(p)
-            if cache.exists():
-                with np.load(cache) as cached:
-                    if str(cached['model_hash'])!=model_hash or str(cached['signal_hash'])!=digest or str(cached['header_hash'])!=header_digest:
-                        raise ValueError('Stale cache: choose a fresh output directory after changing model/data.')
-            else:
-                # Long records: keep all windows in the analysis CLI; record benchmark uses first 30s and marks this.
-                rec=load_record(p,stop=round(min(30,float(row.duration_s))*float(row.fs)))
-                f,w,qc=extract_record(rec,predictor)
-                np.savez_compressed(cache,interval=np.array(list(f.values()),np.float32),waveform=np.array(list(w.values()),np.float32),
-                    interval_names=np.array(list(f)),waveform_names=np.array(list(w)),signal_hash=digest,header_hash=header_digest,model_hash=model_hash)
-            item=row.to_dict();item.update(cache=str(cache),signal_hash=digest,analyzed_seconds=min(30,float(row.duration_s)))
-            rows.append(item)
-        except Exception as e:
-            fail.append(dict(record=name,error=repr(e)));print('ERROR',name,repr(e),flush=True)
-        if (k+1)%100==0:
-            pd.DataFrame(rows).to_csv(out/'manifest.csv',index=False)
+    from functools import partial
+    from ecg_project.processing.parallel import ordered_map
+    rows=[];fail=[];start=time.monotonic()
+    function=partial(_prepare_one_record,output=output,checkpoint=checkpoint,device=device)
+    iterator=ordered_map(function,frame.to_dict('records'),workers=None if device=='cpu' else 1)
+    for k,(item,error) in enumerate(tqdm(iterator,total=len(frame),desc='Record features',unit='record')):
+        if error:fail.append(error)
+        else:rows.append(item)
+        if (k+1)%100==0:pd.DataFrame(rows).to_csv(out/'manifest.csv',index=False)
+    if not rows:
+        save_json(out/'extraction.json',dict(failures=fail,records=0))
+        raise ValueError('No record features prepared; inspect extraction.json')
     result=pd.DataFrame(rows)
     # Exact duplicated payloads: keep the most protected split, drop training copies.
     rank={'external_long':0,'external':1,'test':2,'valid':3,'train':4}

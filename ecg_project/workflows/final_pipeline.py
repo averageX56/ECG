@@ -15,4 +15,5 @@ def run(path,output='reports/final_example',pipeline='configs/final_pipeline.jso
     models=config['models']
     return analyze(path,output=output,checkpoint=models['delineator']['path'],
         beat_model_path=models['beat_classifier']['path'],record_model_path=models['record_classifier']['path'],
+        vt_model_path=models['vt_candidate_classifier']['path'],
         csv_fs=csv_fs,lead=lead,start_seconds=start_seconds,duration_seconds=duration_seconds,device=device)
