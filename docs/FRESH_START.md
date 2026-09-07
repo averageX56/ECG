@@ -7,17 +7,17 @@
 ## Порядок
 
 ```text
-CPU 1 (локально)
+CPU 1 (CPU allocation кластера или локально)
   audit / metadata / dataset manifest
   manual LUDB/QTDB inputs, optional train-only consistency inputs
   Founder inputs, HuBERT inputs
 GPU 1 (Jupyter A100)
   train U-Net → artifacts/cluster/delineator_qt.pt
-CPU 2 (локально, с новым checkpoint)
+CPU 2 (CPU allocation, с новым checkpoint)
   prepare-beats, prepare-unlabeled
   prepare-records → HGB (optional)
 GPU 2 (Jupyter A100)
-  Qwen pseudo-cache: batched CUDA U-Net in Colab, persistent Drive output
+  Qwen pseudo-cache: batched CUDA U-Net on cluster, persistent artifacts output
   Beat-BERT, Founder, HuBERT LoRA/QLoRA, Qwen supervised/distilled
 CPU / notebook analysis
   validation plots and reports; fixed final test protocol; analysis bundle
@@ -28,23 +28,17 @@ CPU / notebook analysis
 Установить зависимости проекта согласно pyproject.toml в отдельное окружение и выбрать его Jupyter kernel.
 Запускать из корня репозитория. Никаких больших datasets notebook автоматически не скачивает.
 
-**Colab:** первая ячейка подключает `/content/drive/MyDrive/ECG_DATA`, репозиторий — `/content/ECG`.
-Artifacts/reports связываются с Drive и переживают смену сессии. Qwen extended больше не требует
-локального CPU 2: `PREPARE_QWEN_PSEUDO_GPU=True` генерирует teacher logits непосредственно на GPU
-перед student training. Для этого на Drive должны быть исходные `data/`, `LUDB/` и audited catalog.
-Если там только artifacts/reports, нужно добавить raw signals или готовый pseudo cache.
-Это требование к входам teacher, а не необходимость запускать подготовку на локальном компьютере.
+## JupyterLab / A100
+
+Окружение и запуск: [CLUSTER.md](CLUSTER.md). Датасеты и artifacts уже находятся на кластере:
+не удаляйте их и не запускайте повторную загрузку. Notebook читает существующие пути без mount/symlink операций.
+CPU-команды можно выполнять на CPU allocation того же кластера. Для Qwen возврат на ноутбук не нужен.
+Pseudo preparation: existing raw → CPU workers → CUDA U-Net → artifacts.
+Опциональный `ECG_SCRATCH` добавляет запись нового cache на SSD и финальную проверенную синхронизацию.
+Batch64, workers8; источники Qwen E: CPSC_EXTRA, PTBXL, CPSC, CHAPMAN, без Ningbo.
+Полный rehash: `VERIFY_QWEN_SOURCES=True`. Подробности: [performance](QWEN_PREPARATION_PERFORMANCE.md).
 
 ## Датасеты
-
-Qwen preparation: **Drive raw → local SSD → CPU preprocess → CUDA U-Net → local cache → Drive sync**.
-Batch64, IO workers8 (spawn, CUDA только в parent). Индикатор preprocessing двигается до первого
-GPU batch. Низкая GPU utilization раньше соответствовала ожиданию Drive I/O/preprocessing.
-Staging копирует также обязательные protected holdouts; Ningbo не нужен для Qwen E.
-Только завершённый проверенный cache синхронизируется на Drive. Непустые чужие каталоги не удаляются.
-При потере Colab runtime незавершённый local scratch теряется; periodic sync по умолчанию нет.
-`VERIFY_QWEN_SOURCES=True` включает полный rehash вместо reuse immutable snapshot.
-Детали: [Qwen preparation performance](QWEN_PREPARATION_PERFORMANCE.md).
 
 | Ветка | Источники / локальные папки |
 |---|---|
@@ -93,8 +87,8 @@ artifacts/
   hubert_large/                 # preserved pretrained base
   beat_features_v2/             # after GPU1 → CPU2
   unlabeled_beats_v2/           # after GPU1 → CPU2
-  qwen_pseudo_training2/        # C; generated on Colab GPU, saved to Drive
-  qwen_pseudo_extended/         # D/E; generated on Colab GPU, saved to Drive
+  qwen_pseudo_training2/        # C; generated on cluster GPU, persistent artifacts
+  qwen_pseudo_extended/         # D/E; generated on cluster GPU, persistent artifacts
   record_features_v2/           # optional CPU HGB
   cluster/
     delineator/                 # latest/best/history/metrics
@@ -103,10 +97,10 @@ artifacts/
 ```
 
 GPU training потребляет готовые caches. Для разрешённой GPU-генерации Qwen pseudo cache
-notebook также читает исходные ECG из Drive; повторного копирования teacher на локальную машину нет.
+notebook читает исходные ECG на существующих путях кластера; копирования teacher на локальную машину нет.
 Qwen base 1.7B/4B скачивается самим кластером в явно включённой ветке.
 Для identity-only exclusion registry нужны holdout raw signals в месте подготовки pseudo cache
-(в Colab — Drive/data и Drive/LUDB); labels не используются для tuning.
+(существующие data и LUDB); labels не используются для tuning.
 После изменения teacher/data/preprocessing cache stale: задайте новый output, не подменяйте provenance.
 
 HuBERT v2: canonical12leads, deterministic first10sec, <10sec исключаются, zero padding нет.

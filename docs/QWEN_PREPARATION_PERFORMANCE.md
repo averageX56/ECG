@@ -1,51 +1,29 @@
-# Qwen pseudo preparation: Colab SSD
+# Qwen pseudo preparation: cluster performance
 
-Точечное изменение I/O пути, не архитектур или objective student.
+Primary runtime: Linux A100 / JupyterLab, see [CLUSTER](CLUSTER.md).
+Existing raw → CPU workers → batched CUDA U-Net → persistent pseudo cache.
+Optional `QWEN_SCRATCH` adds a node-local cache and final validated sync to artifacts.
+The cluster launcher never deletes, moves, copies or relinks existing raw directories.
+Legacy Colab helpers remain for compatibility; the notebook does not import them.
 
-```text
-Drive raw → local SSD → CPU preprocess → CUDA U-Net → local cache → Drive sync
-```
+Defaults: batch64, spawn workers8. Only the parent owns CUDA/the teacher.
+Fresh signals are decoded once; only the selected lead is filtered, preserving time alignment.
+Separate progress bars: protection registry, preprocessing, inference/write, optional final sync.
+Preprocessing progresses before the first CUDA batch is ready.
+Qwen E sources: CPSC_EXTRA, PTBXL, CPSC, CHAPMAN. Ningbo remains available to other branches.
+LUDB/QTDB controls and protected record cohorts remain mandatory for patient/record/exact-signal exclusion.
 
-Extended E: CPSC_EXTRA, PTBXL, CPSC, CHAPMAN. Ningbo исключён только из Qwen profile.
-Staging: data/Training_2, Training_WFDB, WFDB_PTB-XL, WFDB_ChapmanShaoxing, qtdb_external, LUDB.
-Catalog добавляет обязательные holdouts (обычно Georgia/St Petersburg). Их identities и exact hashes
-по-прежнему исключают leakage; evaluation labels не используются.
+Resume verifies NPZ hashes and metadata before raw decoding. Teacher hash, cohort identity,
+preprocessing version, tau and cached signal identity remain bound to the cache.
+Unchanged source size/mtime enables fast reuse; `VERIFY_QWEN_SOURCES=True` rehashes raw contents,
+including changes preserving timestamps. Legacy shards are fully hashed once to migrate metadata.
+Protected identity shards use the same fast path. Stale caches fail instead of changing cohorts silently.
 
-Default scratch `/content/ecg_qwen`: raw/, caches/qwen_pseudo_extended/, protected_identities/.
-`stage_qwen_raw` делает первоначальную копию с SHA256 и сохраняет ownership/completion manifests.
-Полная локальная копия повторно не читается с Drive: проверяются список файлов, size/mtime.
-Это повторное использование **того же immutable snapshot**, а не автоматическое обновление Drive данных.
-`verify_sources=True` / `VERIFY_QWEN_SOURCES=True` проверяет полные Drive/local hashes и source hashes
-при resume. Изменения содержимого с сохранением size/mtime обнаруживаются в этом строгом режиме.
-При изменении датасетов используйте новый scratch; старые/чужие непустые каталоги не удаляются.
+Only new outputs use scratch. Existing partial persistent caches resume in place.
+Completed caches are validated before final sync; provenance is published last via a sibling `.syncing` directory.
+Interrupted copies cannot appear as a complete destination. Different existing outputs are preserved and rejected.
+No periodic sync or automatic cleanup; choose durable output if the job may lose its local SSD.
 
-На время generation symlinks data/LUDB переключаются на SSD, затем восстанавливаются в finally.
-Attach Drive для остальных branches не меняется. Teacher читается один раз; CUDA только в parent,
-torch.inference_mode, batch64. Spawn workers8 выполняют чтение и preprocessing, без модели.
-Protection registry и псевдо-shards пишутся на SSD. Tqdm показывает registry/preprocess/inference/sync
-отдельно; preprocessing виден до первого batch. Batch остаётся configurable.
-
-Resume сначала проверяет metadata, teacher hash, tau, version, source/patient identity, source stat
-и SHA256 готового shard. Затем использует сохранённый signal hash для leakage check, без load_record,
-preprocessing или повторного decoded-signal hash. Совместимые старые metadata обновляются после
-однократной проверки исходных SHA256 и исходного cache_identity.json, без WFDB decoding.
-Изменённый teacher/cohort/tau по-прежнему отклоняется. Для нового record raw bytes хешируются один раз, WFDB decoding выполняется один раз;
-этот rec используется и для signal hash, и для preprocessing. Полное устранение raw reads для первого
-прохода не заявляется: file SHA256 и WFDB decoder читают bytes отдельно, но с local SSD.
-
-После publish проверяется local provenance. Затем одна финальная фаза copy в `<output>.syncing`
-на Drive, verification и переименование в публичный output. Незавершённый local cache не публикуется.
-Прерванная final sync может быть повторена. Существующий другой Drive cache не перезаписывается.
-Это по-прежнему много файлов при final sync; они больше не тормозят CUDA hot loop.
-Архивный storage format не вводится, CPU/GPU NPZ schema совместима.
-
-Periodic sync по умолчанию отсутствует ради скорости. Прерывание ячейки сохраняет local resume;
-сброс Colab runtime теряет незавершённый scratch. Завершённые artifacts/results остаются на Drive.
-Сохранённые source manifests и SHA256 обеспечивают audit, fast stat checks не заменяют strict rehash
-для недоверенных/изменяемых snapshots.
-
-Notebook настроен на чистый Qwen E/1.7B, curriculum1/2/4, остальные branches выключены.
-Если teacher готов — RUN_DELINEATION=False; иначе включите его. Итоговый порядок:
-mount → clone/update → dependencies → stage raw → optional teacher → pseudo generation → sync → Qwen.
-Низкая GPU utilization в прежнем пути объяснялась ожиданием Drive I/O/preprocessing и batch;
-это не доказательство сбоя CUDA. A100 throughput после изменения ещё нужно измерить.
+Previously idle CUDA could be waiting for Drive I/O, preprocessing and batch256. Shared cluster storage
+can also be the bottleneck. Actual A100 throughput is unmeasured here; use `preparation_run.json`
+(records/sec and PyTorch peak allocated/reserved memory) and stage progress.

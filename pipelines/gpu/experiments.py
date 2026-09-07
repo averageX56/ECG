@@ -1,4 +1,4 @@
-"""Reproducible v2 profiles, with optional Colab GPU pseudo-cache preparation."""
+"""Reproducible v2 profiles, with optional cluster GPU pseudo-cache preparation."""
 from dataclasses import replace
 from pathlib import Path
 import json

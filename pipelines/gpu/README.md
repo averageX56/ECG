@@ -5,25 +5,17 @@
 Текущий чистый Qwen profile включает `RUN_QWEN=True`, `RUN_QWEN_CURRICULUM=True`, E/1.7B и ratios1/2/4;
 остальные branches выключены. `RUN_SMOKE=False` полностью пропускает smoke перед full run.
 
-В Colab первая ячейка монтирует Drive, клонирует отсутствующий `/content/ECG` и подключает
-`ECG_DATA/artifacts` и `reports` симлинками. Optional `ECG_DATA/data` и `LUDB` также подключаются.
-Существующий непустой checkout/каталог не удаляется. Аргументы `subprocess.run` передаются списком.
-Зависимости устанавливаются только в Colab; обычный Jupyter bootstrap пропускает.
+Запуск: [окружение JupyterLab / A100](../../docs/CLUSTER.md).
+Notebook использует существующий checkout, data, LUDB и artifacts; не монтирует Drive, не удаляет каталоги,
+не обновляет git и не устанавливает зависимости в работающий kernel.
 
-GPU 1 обучает U-Net на LUDB + partial manual QTDB и optional Training_2 consistency.
-Выбранный checkpoint: `artifacts/cluster/delineator_qt.pt`. Для Beat-BERT выполнить CPU 2.
-Для Qwen C/D/E оставить checkpoint в Colab: `PREPARE_QWEN_PSEUDO_GPU=True` запускает отдельную
-генерацию pseudo-cache на CUDA (default batch64). `PSEUDO_IO_WORKERS=8` читает/фильтрует сигналы;
-CUDA-модель находится только в главном процессе. Готовые shards пропускаются при resume.
-Student затем читает cache, без повторного teacher inference на каждой training iteration.
-
-Qwen preparation: **Drive raw → local SSD → CPU preprocess → CUDA U-Net → local cache → Drive sync**.
-Extended E: строго CPSC_EXTRA, PTBXL, CPSC, CHAPMAN; **без Ningbo**. Другие branches не меняются.
-Отдельные progress bars: Protection registry, Pseudo input preprocessing, GPU inference/write, Final sync to Drive.
-Raw symlinks временно указывают на SSD и восстанавливаются после подготовки. Кэш публикуется на Drive
-только после завершения и проверки. Ранее простаивающий GPU ожидал Drive I/O/preprocessing и полный
-batch; это не свидетельствовало о проблеме CUDA. Численное ускорение на A100 ещё нужно измерить.
-Snapshot reuse, strict verification и interruption: [подробности](../../docs/QWEN_PREPARATION_PERFORMANCE.md).
+GPU 1: optional U-Net → `artifacts/cluster/delineator_qt.pt`.
+Qwen C/D/E: existing raw → CPU workers → batched CUDA teacher → persistent artifacts cache.
+Batch64, workers8; CUDA только в parent. Optional `ECG_SCRATCH` переносит только запись нового cache на SSD,
+после завершения выполняется проверенная синхронизация. Исходные каталоги остаются на своих местах.
+Extended E: CPSC_EXTRA, PTBXL, CPSC, CHAPMAN; без Ningbo. Registry сохраняет все проверки holdout overlap.
+Resume проверяет готовые shards до WFDB decoding. Старые результаты не очищаются.
+Подробности: [performance](../../docs/QWEN_PREPARATION_PERFORMANCE.md).
 
 Qwen experiments: A LUDB, B LUDB+QT, C +Training_2 pseudo hard, D +extended pseudo hard,
 E +soft KD. Выбор `QWEN_EXPERIMENTS`, размеры `QWEN_SIZES=['1.7B']` или `['1.7B','4B']`.

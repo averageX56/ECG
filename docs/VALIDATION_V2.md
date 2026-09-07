@@ -26,3 +26,13 @@
 
 После проверок CPU/GPU outputs очищаются по запросу пользователя. Датасеты, pretrained базы
 и исходные metadata сохраняются; результаты перечисленных smoke checks не используются для final model selection.
+# JupyterLab cluster migration validation (2026-09-07)
+
+`python -m pytest -q`: **65 passed, 1 skipped** (optional checkpoint unavailable).
+Notebook schema and all code-cell syntax validated; setup/training cells dry-run with GPU branches disabled in memory.
+`bash -n scripts/setup_cluster.sh` passed. Existing data/artifacts were not cleaned, moved or relinked.
+Cluster tests cover directory preservation, missing teacher, teacher mismatch, interrupted scratch publication,
+persistent partial resume and the exact Qwen source set. Existing leakage/hash/schema tests remain passing.
+Linux dependency installation and a full A100/Qwen training run were not executed on this Windows host.
+The selected torch/transformers/bitsandbytes versions match the existing local software versions apart from the CUDA wheel;
+cluster NF4 forward/backward is checked by the notebook before model download/training.

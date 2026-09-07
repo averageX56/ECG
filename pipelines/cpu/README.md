@@ -21,7 +21,7 @@ HuBERT требует 12 canonical leads; Founder — lead I. Короткие �
 
 После GPU 1 вернуть новый U-Net checkpoint локально:
 
-Для Beat-BERT/HGB. **Qwen C/D/E теперь готовит pseudo-cache прямо на GPU в Colab**;
+Для Beat-BERT/HGB. **Qwen C/D/E готовит pseudo-cache прямо на GPU кластера в JupyterLab**;
 приведённые ниже `prepare-qwen-pseudo` команды сохранены только как optional CPU fallback.
 
 ```bash

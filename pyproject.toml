@@ -13,6 +13,7 @@ dependencies = ["numpy>=1.26", "scipy>=1.12", "pandas>=2.1", "scikit-learn>=1.6"
 dev = ["pytest>=8", "nbformat>=5", "nbclient>=0.10", "ipykernel>=6"]
 lora = ["transformers>=5.8,<5.9", "safetensors>=0.4"]
 qlora = ["transformers>=5.8,<5.9", "safetensors>=0.4", "bitsandbytes>=0.48,<0.50", "torch>=2.3"]
+cluster = ["jupyterlab>=4.3,<5", "ipykernel>=6.29,<7", "ipywidgets>=8.1,<9", "nbformat>=5.10,<6", "nbclient>=0.10,<1"]
 
 [project.scripts]
 ecg = "ecg_project.__main__:main"

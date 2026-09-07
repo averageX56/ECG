@@ -127,7 +127,7 @@ def prepare(output='artifacts/qwen_pseudo_inputs',sources=('CPSC_EXTRA',),checkp
             registry_output='artifacts/protected_identities_v2',strict_sources=False,report_path='reports/qwen_pseudo_dataset_report.json'):
     require_checkpoint(checkpoint)
     if device not in ('cpu','cuda') or batch_size<1:raise ValueError('Invalid inference device/batch size')
-    if device=='cuda' and not torch.cuda.is_available():raise RuntimeError('CUDA pseudo generation requested; enable a GPU runtime in Colab')
+    if device=='cuda' and not torch.cuda.is_available():raise RuntimeError('CUDA unavailable: start the Jupyter kernel on an allocated GPU node and check the CUDA PyTorch installation')
     teacher_rows,teacher_manifest_hash=teacher_training_manifest(checkpoint)
     if not 0<tau<=1:raise ValueError('Confidence threshold must be in (0,1]')
     frame=build_record_manifest(catalog,sources,include_holdout=False)

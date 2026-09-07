@@ -109,7 +109,7 @@ def sync_completed_cache(local,destination):
     if owner.exists() and json.loads(owner.read_text())!={'provenance_sha256':digest}:raise ValueError('Interrupted sync belongs to another cache')
     atomic_json(owner,dict(provenance_sha256=digest))
     files=[p for p in local.rglob('*') if p.is_file() and p.name!='provenance.json' and not p.name.endswith('.partial')]
-    for p in tqdm(files,desc='Final sync to Drive',unit='file'):
+    for p in tqdm(files,desc='Final sync to persistent storage',unit='file'):
         target=pending/p.relative_to(local);target.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(p,target)
     shutil.copy2(local/'provenance.json',pending/'provenance.json')
     validate_cache(pending)

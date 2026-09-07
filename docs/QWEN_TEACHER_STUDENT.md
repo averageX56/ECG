@@ -23,13 +23,13 @@ factory `pipelines.gpu.experiments.qwen_experiment` задаёт 40/80GB profile
 LUDB test, QT external, PTB9/10 и external records не участвуют в selection/training.
 Новые размеры/режимы имеют отдельные run directories. Supervised baseline не удалён.
 
-## Colab GPU cache
+## JupyterLab cluster GPU cache
 
 В notebook включить `PREPARE_QWEN_PSEUDO_GPU=True`. C/D/E автоматически вызывают отдельный
 GPU preparation stage после появления teacher, до загрузки Qwen base:
 
 ```python
-from pipelines.gpu.colab import prepare_qwen_pseudo_gpu
+from pipelines.gpu.cluster import prepare_qwen_pseudo_gpu
 prepare_qwen_pseudo_gpu(
     output='artifacts/qwen_pseudo_extended',
     sources=['CPSC_EXTRA','PTBXL','CPSC','CHAPMAN'],
@@ -39,12 +39,12 @@ prepare_qwen_pseudo_gpu(
 ```
 
 Исходные `data/` и `LUDB/`, catalog и manual teacher-training manifest должны быть доступны
-через Drive. U-Net работает батчами на CUDA, workers только читают/фильтруют входы.
+на существующих путях кластера. U-Net работает батчами на CUDA, workers только читают/фильтруют входы.
 Полностью готовый cache не вызывает teacher forward; частичный продолжается по готовым shards.
-Выход сохраняется в Drive/artifacts; CPU fallback command остаётся доступной как optional baseline.
+Выход сохраняется в artifacts; CPU fallback command остаётся доступной как optional baseline.
 
-Горячий цикл выполняется на локальном SSD Colab: Drive raw → staging → CPU workers → CUDA U-Net
-→ local cache → финальная Drive sync. Raw symlinks временные; registry тоже локальный.
+Путь: existing raw → CPU workers → CUDA U-Net → persistent cache.
+Optional scratch добавляет local cache → финальный sync; существующие raw каталоги остаются на месте.
 Fast resume и strict rehash описаны в [performance protocol](QWEN_PREPARATION_PERFORMANCE.md).
 
 Extended pool задаётся явно в sources и отдельным output.
