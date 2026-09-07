@@ -7,7 +7,7 @@ from ecg_project.training.delineation_v2 import DelineationConfig
 
 def require_cache(root,command,files=('provenance.json',)):
     missing=[str(Path(root)/f) for f in files if not (Path(root)/f).is_file()]
-    if missing:raise FileNotFoundError('Missing cache: '+', '.join(missing)+'\nRun locally: '+command)
+    if missing:raise FileNotFoundError('Missing cache: '+', '.join(missing)+'\nPreparation: '+command)
 
 
 def require_train_sources(root,expected):
