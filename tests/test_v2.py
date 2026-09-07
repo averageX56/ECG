@@ -168,7 +168,9 @@ def test_pseudo_worker_real_tensors_and_resumption(tmp_path,monkeypatch):
     root=tmp_path/'cache';root.mkdir();checkpoint=tmp_path/'teacher.pt';checkpoint.write_bytes(b'teacher')
     rec=SimpleNamespace(signal=np.random.default_rng(1).normal(size=(2500,1)).astype('float32'),fs=250,leads=['II'])
     monkeypatch.setattr(worker,'load_record',lambda _:rec)
-    monkeypatch.setattr(worker,'source_hashes',lambda _:dict(raw='sha256'))
+    from ecg_project.data.catalog import file_hash
+    raw=tmp_path/'raw.dat';raw.write_bytes(b'raw')
+    monkeypatch.setattr(worker,'source_hashes',lambda _:{str(raw):file_hash(raw)})
     model=torch.nn.Conv1d(1,4,1)
     monkeypatch.setattr(worker,'cached_predictor',lambda *a:SimpleNamespace(model=model))
     row=dict(path='raw',record_id='a',source='CPSC',patient_id='',split='train')
@@ -185,7 +187,9 @@ def test_record_input_metadata_and_short_exclusion(tmp_path,monkeypatch):
     from ecg_project.data import record_inputs as worker
     rec=SimpleNamespace(signal=np.random.default_rng(1).normal(size=(6000,12)),fs=500,leads=LEADS)
     monkeypatch.setattr(worker,'load_record',lambda _:rec)
-    monkeypatch.setattr(worker,'source_hashes',lambda _:dict(raw='sha256'))
+    from ecg_project.data.catalog import file_hash
+    raw=tmp_path/'raw.dat';raw.write_bytes(b'raw')
+    monkeypatch.setattr(worker,'source_hashes',lambda _:{str(raw):file_hash(raw)})
     row=dict(path='raw',source='CPSC',source_key='CPSC',record_id='a',split='valid',patient_id='',lead_availability='original')
     records,excluded=worker._prepare(row,'founder',tmp_path,3)
     assert len(records)==1 and not excluded and records[0]['original_duration']==12
@@ -258,7 +262,9 @@ def test_batched_pseudo_inference_and_cached_resume(tmp_path,monkeypatch,device)
     from ecg_project.data import qwen_pseudo as worker
     rec=SimpleNamespace(signal=np.random.default_rng(4).normal(size=(2500,1)).astype('float32'),fs=250,leads=['II'])
     monkeypatch.setattr(worker,'load_record',lambda _:rec)
-    monkeypatch.setattr(worker,'source_hashes',lambda _:dict(raw='sha256'))
+    from ecg_project.data.catalog import file_hash
+    raw=tmp_path/'raw.dat';raw.write_bytes(b'raw')
+    monkeypatch.setattr(worker,'source_hashes',lambda _:{str(raw):file_hash(raw)})
     rows=[dict(path='raw',record_id=str(i),source='CPSC',patient_id='',split='train') for i in range(3)]
     model=torch.nn.Conv1d(1,4,1).to(device);batches=[]
     hook=model.register_forward_pre_hook(lambda model,args:batches.append(len(args[0])))

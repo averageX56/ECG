@@ -2,7 +2,8 @@
 
 Открыть [единый notebook](../../notebooks/04_all_pipelines_a100.ipynb) в Jupyter из корня репозитория.
 Настроить `RUN_DELINEATION`, `RUN_BERT`, `RUN_FOUNDER`, `RUN_HUBERT_LORA`, `RUN_QWEN`.
-Все false по умолчанию; `RUN_SMOKE=False` полностью пропускает smoke перед full run.
+Текущий чистый Qwen profile включает `RUN_QWEN=True`, `RUN_QWEN_CURRICULUM=True`, E/1.7B и ratios1/2/4;
+остальные branches выключены. `RUN_SMOKE=False` полностью пропускает smoke перед full run.
 
 В Colab первая ячейка монтирует Drive, клонирует отсутствующий `/content/ECG` и подключает
 `ECG_DATA/artifacts` и `reports` симлинками. Optional `ECG_DATA/data` и `LUDB` также подключаются.
@@ -12,9 +13,17 @@
 GPU 1 обучает U-Net на LUDB + partial manual QTDB и optional Training_2 consistency.
 Выбранный checkpoint: `artifacts/cluster/delineator_qt.pt`. Для Beat-BERT выполнить CPU 2.
 Для Qwen C/D/E оставить checkpoint в Colab: `PREPARE_QWEN_PSEUDO_GPU=True` запускает отдельную
-генерацию pseudo-cache на CUDA (default batch256). `PSEUDO_IO_WORKERS=2` читает/фильтрует сигналы;
+генерацию pseudo-cache на CUDA (default batch64). `PSEUDO_IO_WORKERS=8` читает/фильтрует сигналы;
 CUDA-модель находится только в главном процессе. Готовые shards пропускаются при resume.
 Student затем читает cache, без повторного teacher inference на каждой training iteration.
+
+Qwen preparation: **Drive raw → local SSD → CPU preprocess → CUDA U-Net → local cache → Drive sync**.
+Extended E: строго CPSC_EXTRA, PTBXL, CPSC, CHAPMAN; **без Ningbo**. Другие branches не меняются.
+Отдельные progress bars: Protection registry, Pseudo input preprocessing, GPU inference/write, Final sync to Drive.
+Raw symlinks временно указывают на SSD и восстанавливаются после подготовки. Кэш публикуется на Drive
+только после завершения и проверки. Ранее простаивающий GPU ожидал Drive I/O/preprocessing и полный
+batch; это не свидетельствовало о проблеме CUDA. Численное ускорение на A100 ещё нужно измерить.
+Snapshot reuse, strict verification и interruption: [подробности](../../docs/QWEN_PREPARATION_PERFORMANCE.md).
 
 Qwen experiments: A LUDB, B LUDB+QT, C +Training_2 pseudo hard, D +extended pseudo hard,
 E +soft KD. Выбор `QWEN_EXPERIMENTS`, размеры `QWEN_SIZES=['1.7B']` или `['1.7B','4B']`.

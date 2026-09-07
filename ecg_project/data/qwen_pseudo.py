@@ -1,6 +1,6 @@
 """Resumable teacher logits: CPU fallback or batched CUDA inference in Colab."""
 from pathlib import Path
-from functools import partial
+from functools import partial,lru_cache
 import json
 import time
 from itertools import islice
@@ -10,12 +10,33 @@ from ecg_project.data.io import load_record
 from ecg_project.data.catalog import file_hash
 from ecg_project.data.policy import build_record_manifest
 from ecg_project.data.protection import build_registry,assert_unprotected,signal_hash,registry_index
-from ecg_project.data.cache import CANONICAL_DELINEATOR,require_checkpoint,begin_cache,source_hashes,shard,publish,atomic_json
+from ecg_project.data.cache import CANONICAL_DELINEATOR,require_checkpoint,begin_cache,source_hashes,shard,publish,atomic_json,source_stats,checked_shard
 from ecg_project.models.segmentation import normalize
 from ecg_project.processing.signal import preprocess,resample
 from ecg_project.processing.parallel import ordered_map,cached_predictor
 
 VERSION='qwen_pseudo_teacher_unet_250hz_logits_fixed10s_v2'
+
+
+@lru_cache(maxsize=4)
+def _legacy_owner(path,mtime_ns):
+    identity=json.loads(Path(path).read_text())
+    return identity,{(r['source'],str(r['record_id'])):r for r in identity['rows']}
+
+
+def _upgrade_legacy_shard(root,key,row,teacher_hash,tau):
+    """Old caches get one content verification, never another WFDB decode."""
+    path=Path(root)/(key+'.json');old=json.loads(path.read_text())
+    if 'row' in old['identity']:return
+    owner=Path(root)/'cache_identity.json'
+    if not owner.is_file():raise ValueError('Legacy pseudo cache needs its original cache_identity.json')
+    identity,rows=_legacy_owner(str(owner),owner.stat().st_mtime_ns)
+    if (identity.get('preprocessing')!=VERSION or identity.get('teacher_sha256')!=teacher_hash or
+        identity.get('tau')!=tau or rows.get((row['source'],str(row['record_id'])))!=row):
+        raise ValueError('Stale legacy pseudo cache identity')
+    checked=checked_shard(root,key,dict(teacher_sha256=teacher_hash,tau=tau),strict_sources=True)
+    old['identity']=dict(checked,row=row,preprocessing=VERSION,source_stats=source_stats(checked['source_sha256']))
+    atomic_json(path,old)
 
 
 def teacher_training_manifest(checkpoint):
@@ -33,21 +54,28 @@ def teacher_training_manifest(checkpoint):
     return training,expected
 
 
-def _input(row,root,teacher_hash,tau,registry):
-    rec=load_record(row['path']);identity=source_hashes(row['path']);row=dict(row,signal_hash=signal_hash(rec))
+def _input(row,root,teacher_hash,tau,registry,strict_sources=False):
     key=row['source']+'_'+str(row['record_id'])
+    expected=dict(teacher_sha256=teacher_hash,tau=tau,row=row,preprocessing=VERSION)
+    if (Path(root)/(key+'.json')).exists():
+        _upgrade_legacy_shard(root,key,row,teacher_hash,tau)
+        identity=checked_shard(root,key,expected,strict_sources)
+        cached_row=dict(row,signal_hash=identity['signal_hash'])
+        assert_unprotected(cached_row,registry)
+        return dict(row=cached_row,key=key,identity=identity,cached=True),None
+    raw_row=dict(row)
+    identity=source_hashes(row['path']);rec=load_record(row['path']);row=dict(row,signal_hash=signal_hash(rec))
     shard(root,key+'_source',dict(source_sha256=identity,signal_hash=row['signal_hash']),lambda:dict(checked=True))
     if not np.isfinite(rec.signal).all():return None,dict(source=row['source'],record_id=row['record_id'],reason='nonfinite_signal')
     try:assert_unprotected(row,registry)
     except ValueError as e:return None,dict(source=row['source'],record_id=row['record_id'],reason=str(e))
-    item=dict(row=row,key=key,identity=dict(source_sha256=identity,teacher_sha256=teacher_hash,signal_hash=row['signal_hash'],tau=tau))
-    if (Path(root)/(key+'.json')).exists():
-        shard(root,key,item['identity'],lambda:None)  # Validate completed shard before skipping inference.
-        item['cached']=True;return item,None
-    x=resample(preprocess(rec.signal,rec.fs),rec.fs)
-    if len(x)<2500:raise ValueError('Pseudo candidate shorter than 10 seconds')
+    item=dict(row=row,key=key,identity=dict(source_sha256=identity,source_stats=source_stats(identity),
+        teacher_sha256=teacher_hash,signal_hash=row['signal_hash'],tau=tau,row=raw_row,preprocessing=VERSION))
     ch=rec.leads.index('II') if 'II' in rec.leads else 0
-    item.update(x=normalize(x[:2500,ch:ch+1]).T,lead=rec.leads[ch],cached=False)
+    # Channel-independent filters: preserve full temporal context, process only the used lead.
+    x=resample(preprocess(rec.signal[:,ch:ch+1],rec.fs),rec.fs)
+    if len(x)<2500:raise ValueError('Pseudo candidate shorter than 10 seconds')
+    item.update(x=normalize(x[:2500]).T,lead=rec.leads[ch],cached=False)
     return item,None
 
 
@@ -69,8 +97,8 @@ def _result(item,root,logits=None,tau=.95):
     return result,None
 
 
-def _one(row,root,checkpoint,tau,registry):
-    item,reason=_input(row,root,file_hash(checkpoint),tau,registry)
+def _one(row,root,checkpoint,tau,registry,strict_sources=False):
+    item,reason=_input(row,root,file_hash(checkpoint),tau,registry,strict_sources)
     if reason:return None,reason
     logits=None
     if not item['cached']:
@@ -95,7 +123,8 @@ def batched_results(inputs,root,model,device,batch_size,tau):
 
 
 def prepare(output='artifacts/qwen_pseudo_inputs',sources=('CPSC_EXTRA',),checkpoint=CANONICAL_DELINEATOR,
-            catalog='artifacts/catalog.csv',workers=None,tau=.95,device='cpu',batch_size=256):
+            catalog='artifacts/catalog.csv',workers=None,tau=.95,device='cpu',batch_size=64,
+            registry_output='artifacts/protected_identities_v2',strict_sources=False,report_path='reports/qwen_pseudo_dataset_report.json'):
     require_checkpoint(checkpoint)
     if device not in ('cpu','cuda') or batch_size<1:raise ValueError('Invalid inference device/batch size')
     if device=='cuda' and not torch.cuda.is_available():raise RuntimeError('CUDA pseudo generation requested; enable a GPU runtime in Colab')
@@ -104,7 +133,7 @@ def prepare(output='artifacts/qwen_pseudo_inputs',sources=('CPSC_EXTRA',),checkp
     frame=build_record_manifest(catalog,sources,include_holdout=False)
     frame=frame[(frame.split=='train')&(frame.readable==True)&(frame.duration_s>=10)]
     if frame.empty:raise ValueError('No eligible pseudo training records')
-    registry=build_registry(catalog,workers)
+    registry=build_registry(catalog,workers,output=registry_output,strict_sources=strict_sources)
     protected=registry_index(registry)
     for row in teacher_rows:assert_unprotected(row,protected)
     rows=[dict(path=r.path,source=r.source_key,record_id=str(r.record_id),patient_id=r.patient_id,split='train') for r in frame.itertuples()]
@@ -119,11 +148,15 @@ def prepare(output='artifacts/qwen_pseudo_inputs',sources=('CPSC_EXTRA',),checkp
             from ecg_project.models.segmentation import Predictor
             torch.cuda.reset_peak_memory_stats();torch.backends.cudnn.allow_tf32=False;torch.backends.cuda.matmul.allow_tf32=False
             teacher=Predictor(checkpoint,'cuda').model
-            inputs=ordered_map(partial(_input,root=str(root),teacher_hash=file_hash(checkpoint),tau=tau,registry=str(root/'protected_registry.json')),rows,workers)
+            from tqdm.auto import tqdm
+            inputs=tqdm(ordered_map(partial(_input,root=str(root),teacher_hash=file_hash(checkpoint),tau=tau,
+                registry=str(root/'protected_registry.json'),strict_sources=strict_sources),rows,workers),
+                total=len(rows),desc='Pseudo input preprocessing',unit='record',mininterval=.2)
             iterator=batched_results(inputs,root,teacher,device,batch_size,tau)
-        else:iterator=ordered_map(partial(_one,root=str(root),checkpoint=checkpoint,tau=tau,registry=str(root/'protected_registry.json')),rows,workers)
+        else:iterator=ordered_map(partial(_one,root=str(root),checkpoint=checkpoint,tau=tau,
+            registry=str(root/'protected_registry.json'),strict_sources=strict_sources),rows,workers)
         from tqdm.auto import tqdm
-        for row,reason in tqdm(iterator,total=len(rows),desc=f'Qwen pseudo ({device})',unit='record'):
+        for row,reason in tqdm(iterator,total=len(rows),desc='GPU inference/write' if device=='cuda' else 'CPU inference/write',unit='record'):
             if row:results.append(row)
             else:excluded.append(reason)
     except BaseException:status='interrupted';raise
@@ -154,5 +187,5 @@ def prepare(output='artifacts/qwen_pseudo_inputs',sources=('CPSC_EXTRA',),checkp
         temperature_scaled=False,stored='unscaled_logits',class_names=['background','P','QRS','T'],
         excluded_cohorts='LUDB valid/test; QTDB manual valid and external; PTB fold9/10; Georgia; StP',**stats),
         [root/'manifest.json',root/'excluded.json',root/'protected_registry.json',*[root/(r['key']+'.npz') for r in unique]])
-    atomic_json('reports/qwen_pseudo_dataset_report.json',stats)
+    atomic_json(report_path,stats)
     return root

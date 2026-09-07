@@ -1,6 +1,13 @@
 """Persistent Colab paths without deleting a checkout, datasets or base models."""
 from pathlib import Path
 import os
+EXTENDED_QWEN_SOURCES=('CPSC_EXTRA','PTBXL','CPSC','CHAPMAN')
+
+
+def stage_qwen_raw(*args,**kwargs):
+    # Bootstrap imports attach_drive before installing WFDB/numerical dependencies.
+    from pipelines.gpu.qwen_staging import stage_qwen_raw as stage
+    return stage(*args,**kwargs)
 
 
 def attach_drive(root='/content/ECG',drive='/content/drive/MyDrive/ECG_DATA'):
@@ -20,18 +27,26 @@ def attach_drive(root='/content/ECG',drive='/content/drive/MyDrive/ECG_DATA'):
 
 
 def prepare_qwen_pseudo_gpu(output='artifacts/qwen_pseudo_extended',
-        sources=('CPSC_EXTRA','PTBXL','CPSC','CHAPMAN','NINGBO'),
-        checkpoint='artifacts/cluster/delineator_qt.pt',batch_size=256,workers=2,tau=.95):
+        sources=EXTENDED_QWEN_SOURCES,
+        checkpoint='artifacts/cluster/delineator_qt.pt',batch_size=64,workers=8,tau=.95,
+        root='/content/ECG',drive='/content/drive/MyDrive/ECG_DATA',scratch='/content/ecg_qwen',
+        verify_sources=False):
     from ecg_project.data.cache import require_checkpoint
+    from pipelines.gpu.qwen_staging import local_raw_links,sync_completed_cache
+    import shutil
+    root=Path(root);drive=Path(drive);scratch=Path(scratch)
+    if scratch.resolve().is_relative_to(drive.resolve()):raise ValueError('Qwen scratch must be on local SSD, outside Drive')
     require_checkpoint(checkpoint)
     if not Path('artifacts/catalog.csv').is_file():
         raise FileNotFoundError('Missing artifacts/catalog.csv. Upload the audited catalog to ECG_DATA/artifacts on Drive.')
-    from ecg_project.data.policy import build_record_manifest
-    frame=build_record_manifest('artifacts/catalog.csv',sources)
-    missing=[p for p in frame.path if not Path(p).is_file()]
-    if missing or not Path('LUDB').is_dir() or not Path('data/qtdb_external/split.json').is_file():
-        raise FileNotFoundError('GPU pseudo generation needs raw ECG files and the holdout identity registry. '
-            'Attach ECG_DATA/data -> /content/ECG/data and ECG_DATA/LUDB -> /content/ECG/LUDB. '
-            f'First missing headers: {missing[:3]}')
+    staged=stage_qwen_raw(root,drive,scratch/'raw',sources,verify_sources)
+    scratch.mkdir(parents=True,exist_ok=True)
+    shutil.copy2(root/'artifacts/catalog.csv',scratch/'catalog.csv')
+    # No shard/registry/report writes go through the artifacts -> Drive symlink.
+    local=scratch/'caches'/Path(output).name
     from ecg_project.data.qwen_pseudo import prepare
-    return prepare(output=output,sources=sources,checkpoint=checkpoint,device='cuda',batch_size=batch_size,workers=workers,tau=tau)
+    with local_raw_links(root,staged):
+        prepare(output=str(local),sources=sources,checkpoint=checkpoint,device='cuda',batch_size=batch_size,workers=workers,tau=tau,
+            catalog=str(scratch/'catalog.csv'),registry_output=str(scratch/'protected_identities'),strict_sources=verify_sources,
+            report_path=str(local/'qwen_pseudo_dataset_report.json'))
+    return sync_completed_cache(local,output)

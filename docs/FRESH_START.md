@@ -37,13 +37,23 @@ Artifacts/reports связываются с Drive и переживают сме
 
 ## Датасеты
 
+Qwen preparation: **Drive raw → local SSD → CPU preprocess → CUDA U-Net → local cache → Drive sync**.
+Batch64, IO workers8 (spawn, CUDA только в parent). Индикатор preprocessing двигается до первого
+GPU batch. Низкая GPU utilization раньше соответствовала ожиданию Drive I/O/preprocessing.
+Staging копирует также обязательные protected holdouts; Ningbo не нужен для Qwen E.
+Только завершённый проверенный cache синхронизируется на Drive. Непустые чужие каталоги не удаляются.
+При потере Colab runtime незавершённый local scratch теряется; periodic sync по умолчанию нет.
+`VERIFY_QWEN_SOURCES=True` включает полный rehash вместо reuse immutable snapshot.
+Детали: [Qwen preparation performance](QWEN_PREPARATION_PERFORMANCE.md).
+
 | Ветка | Источники / локальные папки |
 |---|---|
 | U-Net, Qwen manual | `LUDB/`; `data/qtdb_external/` с `split.json`, `.q1c` |
 | U-Net consistency, Qwen C | `data/Training_2/` = CPSC_EXTRA |
 | Beat-BERT supervised | `data/mit-bih/` + `artifacts/mit_headers/`; optional `data/svdb/`, `data/incart/` |
 | Record models, HGB | `data/WFDB_PTB-XL/`, `Training_WFDB/`, `Training_2/`, `WFDB_PTB/`, `WFDB_ChapmanShaoxing/`, `WFDB_Ningbo/` |
-| Extended SSL, Qwen D/E | train-only PTBXL, CPSC, CPSC_EXTRA, CHAPMAN, NINGBO |
+| Extended Beat-BERT SSL | train-only PTBXL, CPSC, CPSC_EXTRA, CHAPMAN, NINGBO |
+| Qwen D/E pseudo | строго train-only CPSC_EXTRA, PTBXL, CPSC, CHAPMAN; без Ningbo |
 | External protection/evaluation | `data/WFDB_GEORGIA/`, `data/Training_StPetersburg/` |
 
 SVDB/INCART поддержаны source adapters. Загрузка — только отдельная явная команда:

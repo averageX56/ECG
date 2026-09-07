@@ -28,7 +28,7 @@ HuBERT требует 12 canonical leads; Founder — lead I. Короткие �
 python -m pipelines.cpu.run prepare-beats --sources MIT SVDB INCART --checkpoint artifacts/cluster/delineator_qt.pt --workers 4
 python -m pipelines.cpu.run prepare-unlabeled --sources CPSC_EXTRA PTBXL CPSC CHAPMAN NINGBO --checkpoint artifacts/cluster/delineator_qt.pt --workers 4
 python -m pipelines.cpu.run prepare-qwen-pseudo --sources CPSC_EXTRA --checkpoint artifacts/cluster/delineator_qt.pt --output artifacts/qwen_pseudo_training2 --tau 0.95 --workers 4
-python -m pipelines.cpu.run prepare-qwen-pseudo --sources CPSC_EXTRA PTBXL CPSC CHAPMAN NINGBO --checkpoint artifacts/cluster/delineator_qt.pt --output artifacts/qwen_pseudo_extended --tau 0.95 --workers 4
+python -m pipelines.cpu.run prepare-qwen-pseudo --sources CPSC_EXTRA PTBXL CPSC CHAPMAN --checkpoint artifacts/cluster/delineator_qt.pt --output artifacts/qwen_pseudo_extended --tau 0.95 --workers 4
 python -m pipelines.cpu.run prepare-records --checkpoint artifacts/cluster/delineator_qt.pt --workers 4
 python -m pipelines.cpu.run train-records --manifest artifacts/record_features_v2/manifest.csv --workers 4
 ```

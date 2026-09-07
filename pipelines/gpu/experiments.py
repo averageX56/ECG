@@ -40,7 +40,7 @@ def assert_qwen_inputs(cfg):
     manual=json.loads((Path(cfg.input_root)/'manifest.json').read_text())
     if {r['source'] for r in manual if r['split']=='valid'}!={'LUDB','QTDB'}:raise ValueError('A–E require the same LUDB + manual QTDB validation protocol')
     if cfg.pseudo_root:
-        sources='CPSC_EXTRA' if cfg.pseudo_root.endswith('training2') else 'CPSC_EXTRA PTBXL CPSC CHAPMAN NINGBO'
+        sources='CPSC_EXTRA' if cfg.pseudo_root.endswith('training2') else 'CPSC_EXTRA PTBXL CPSC CHAPMAN'
         require_cache(cfg.pseudo_root,f'In Colab enable PREPARE_QWEN_PSEUDO_GPU=True before RUN_QWEN; sources={sources}, output={cfg.pseudo_root}',
                       ('provenance.json','manifest.json','protected_registry.json'))
         require_train_sources(cfg.pseudo_root,sources.split())

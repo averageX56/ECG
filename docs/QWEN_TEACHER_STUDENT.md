@@ -11,7 +11,7 @@ NF4 QLoRA, ECG patch adapter и sample segmentation head. Qwen получает 
 | A | LUDB | — | supervised_only |
 | B | LUDB + manual QTDB | — | supervised_only |
 | C | B | Training_2 | teacher_student_hard |
-| D | B | Training_2 + PTBXL1–8/CPSC/Chapman/Ningbo | teacher_student_hard |
+| D | B | Training_2 + PTBXL1–8/CPSC/Chapman | teacher_student_hard |
 | E | B | D + soft KD | teacher_student_hard_soft |
 
 JSON configs: `configs/qwen_v2/{A..E}_{1.7B,4B}.json`. В notebook выбираются явно;
@@ -32,9 +32,9 @@ GPU preparation stage после появления teacher, до загрузк
 from pipelines.gpu.colab import prepare_qwen_pseudo_gpu
 prepare_qwen_pseudo_gpu(
     output='artifacts/qwen_pseudo_extended',
-    sources=['CPSC_EXTRA','PTBXL','CPSC','CHAPMAN','NINGBO'],
+    sources=['CPSC_EXTRA','PTBXL','CPSC','CHAPMAN'],
     checkpoint='artifacts/cluster/delineator_qt.pt',
-    batch_size=256, workers=2,
+    batch_size=64, workers=8,
 )
 ```
 
@@ -42,6 +42,10 @@ prepare_qwen_pseudo_gpu(
 через Drive. U-Net работает батчами на CUDA, workers только читают/фильтруют входы.
 Полностью готовый cache не вызывает teacher forward; частичный продолжается по готовым shards.
 Выход сохраняется в Drive/artifacts; CPU fallback command остаётся доступной как optional baseline.
+
+Горячий цикл выполняется на локальном SSD Colab: Drive raw → staging → CPU workers → CUDA U-Net
+→ local cache → финальная Drive sync. Raw symlinks временные; registry тоже локальный.
+Fast resume и strict rehash описаны в [performance protocol](QWEN_PREPARATION_PERFORMANCE.md).
 
 Extended pool задаётся явно в sources и отдельным output.
 Teacher inference делается один раз; student не загружает U-Net. Один record даёт детерминированное

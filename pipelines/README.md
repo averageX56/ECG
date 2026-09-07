@@ -1,7 +1,8 @@
 # ECG pipelines v2
 
 Один управляющий notebook: [04_all_pipelines_a100.ipynb](../notebooks/04_all_pipelines_a100.ipynb).
-Все GPU-ветки по умолчанию выключены. [Полный запуск](../docs/FRESH_START.md).
+Текущий notebook настроен на Qwen E/1.7B с curriculum; остальные GPU-ветки выключены.
+[Полный запуск](../docs/FRESH_START.md).
 
 ```text
 CPU 1: metadata/audit → manual delineation cache + Founder/HuBERT inputs

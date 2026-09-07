@@ -9,7 +9,7 @@ from ecg_project.data.catalog import ludb_split
 from ecg_project.data.policy import build_record_manifest
 from ecg_project.data.delineation_v2 import qt_rows
 from ecg_project.processing.parallel import ordered_map
-from ecg_project.data.cache import begin_cache, source_hashes, shard
+from ecg_project.data.cache import begin_cache, source_hashes, shard,source_stats,checked_shard,atomic_json
 
 
 def signal_hash(rec):
@@ -19,10 +19,18 @@ def signal_hash(rec):
     return h.hexdigest()
 
 
-def _hashed(row, root):
+def _hashed(row, root,strict_sources=False):
     key=hashlib.sha256((row['source']+':'+row['record_id']).encode()).hexdigest()
-    path=shard(root,key,dict(row=row,source_sha256=source_hashes(row['path'])),
-               lambda:dict(signal_hash=signal_hash(load_record(row['path']))))
+    identity=checked_shard(root,key,dict(row=row),strict_sources)
+    if identity is None:
+        hashes=source_hashes(row['path'])
+        identity=dict(row=row,source_sha256=hashes,source_stats=source_stats(hashes))
+    elif 'source_stats' not in identity:
+        # checked_shard already verified legacy content hashes; persist the fast-resume metadata once.
+        meta=Path(root)/(key+'.json');old=json.loads(meta.read_text())
+        identity=dict(identity,source_stats=source_stats(identity['source_sha256']))
+        atomic_json(meta,dict(old,identity=identity))
+    path=shard(root,key,identity,lambda:dict(signal_hash=signal_hash(load_record(row['path']))))
     with np.load(path) as z:return dict(**row,signal_hash=str(z['signal_hash']))
 
 
@@ -40,12 +48,15 @@ def protected_rows(catalog='artifacts/catalog.csv',ludb_root='LUDB',qt_root='dat
     return rows
 
 
-def build_registry(catalog='artifacts/catalog.csv',workers=None,output='artifacts/protected_identities_v2'):
+def build_registry(catalog='artifacts/catalog.csv',workers=None,output='artifacts/protected_identities_v2',strict_sources=False):
+    from tqdm.auto import tqdm
+    print('Protection registry: checking cohort identities',flush=True)
     rows=protected_rows(catalog)
     missing=[r['path'] for r in rows if not Path(r['path']).is_file()]
     if missing:raise FileNotFoundError(f'Protected raw ECG headers missing; attach data/LUDB before preparing pseudo labels: {missing[:3]}')
     root=begin_cache(output,dict(version='protected_signal_identity_v2',rows=rows))
-    return list(ordered_map(partial(_hashed,root=str(root)),rows,workers))
+    return list(tqdm(ordered_map(partial(_hashed,root=str(root),strict_sources=strict_sources),rows,workers),
+                     total=len(rows),desc='Protection registry',unit='record'))
 
 
 def registry_index(registry):
