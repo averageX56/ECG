@@ -42,6 +42,8 @@ def protected_rows(catalog='artifacts/catalog.csv',ludb_root='LUDB',qt_root='dat
 
 def build_registry(catalog='artifacts/catalog.csv',workers=None,output='artifacts/protected_identities_v2'):
     rows=protected_rows(catalog)
+    missing=[r['path'] for r in rows if not Path(r['path']).is_file()]
+    if missing:raise FileNotFoundError(f'Protected raw ECG headers missing; attach data/LUDB before preparing pseudo labels: {missing[:3]}')
     root=begin_cache(output,dict(version='protected_signal_identity_v2',rows=rows))
     return list(ordered_map(partial(_hashed,root=str(root)),rows,workers))
 

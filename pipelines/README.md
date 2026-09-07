@@ -6,12 +6,15 @@
 ```text
 CPU 1: metadata/audit → manual delineation cache + Founder/HuBERT inputs
 GPU 1: U-Net teacher → artifacts/cluster/delineator_qt.pt
-CPU 2: beat features + unlabeled Beat-BERT features + Qwen pseudo logits + record features
-GPU 2: Beat-BERT / Founder / HuBERT LoRA, QLoRA / Qwen supervised, distilled
+CPU 2: beat features + unlabeled Beat-BERT features + record features
+GPU 2: Qwen pseudo logits (batched U-Net, Colab) → Qwen supervised/distilled
+       Beat-BERT / Founder / HuBERT LoRA, QLoRA
 CPU:   HGB, inference, plots, analysis bundle
 ```
 
-Тяжёлая подготовка выполняется в [cpu](cpu/README.md); обучение — в [gpu](gpu/README.md).
+Базовая подготовка выполняется в [cpu](cpu/README.md); обучение — в [gpu](gpu/README.md).
+Qwen extended pseudo-cache по последнему требованию строится прямо на GPU в Colab после teacher,
+с `PREPARE_QWEN_PSEUDO_GPU=True`. Возвращать teacher на локальный CPU для этой ветки не нужно.
 Общие реализации находятся в `ecg_project/data`, `processing`, `models`, `training`, `evaluation`.
 Baseline trainers сохранены; новые runs не заменяют исторический final selection автоматически.
 

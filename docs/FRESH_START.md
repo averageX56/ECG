@@ -14,9 +14,10 @@ CPU 1 (локально)
 GPU 1 (Jupyter A100)
   train U-Net → artifacts/cluster/delineator_qt.pt
 CPU 2 (локально, с новым checkpoint)
-  prepare-beats, prepare-unlabeled, prepare-qwen-pseudo
+  prepare-beats, prepare-unlabeled
   prepare-records → HGB (optional)
 GPU 2 (Jupyter A100)
+  Qwen pseudo-cache: batched CUDA U-Net in Colab, persistent Drive output
   Beat-BERT, Founder, HuBERT LoRA/QLoRA, Qwen supervised/distilled
 CPU / notebook analysis
   validation plots and reports; fixed final test protocol; analysis bundle
@@ -26,6 +27,13 @@ CPU / notebook analysis
 [`04_all_pipelines_a100.ipynb`](../notebooks/04_all_pipelines_a100.ipynb).
 Установить зависимости проекта согласно pyproject.toml в отдельное окружение и выбрать его Jupyter kernel.
 Запускать из корня репозитория. Никаких больших datasets notebook автоматически не скачивает.
+
+**Colab:** первая ячейка подключает `/content/drive/MyDrive/ECG_DATA`, репозиторий — `/content/ECG`.
+Artifacts/reports связываются с Drive и переживают смену сессии. Qwen extended больше не требует
+локального CPU 2: `PREPARE_QWEN_PSEUDO_GPU=True` генерирует teacher logits непосредственно на GPU
+перед student training. Для этого на Drive должны быть исходные `data/`, `LUDB/` и audited catalog.
+Если там только artifacts/reports, нужно добавить raw signals или готовый pseudo cache.
+Это требование к входам teacher, а не необходимость запускать подготовку на локальном компьютере.
 
 ## Датасеты
 
@@ -75,8 +83,8 @@ artifacts/
   hubert_large/                 # preserved pretrained base
   beat_features_v2/             # after GPU1 → CPU2
   unlabeled_beats_v2/           # after GPU1 → CPU2
-  qwen_pseudo_training2/        # C
-  qwen_pseudo_extended/         # D/E
+  qwen_pseudo_training2/        # C; generated on Colab GPU, saved to Drive
+  qwen_pseudo_extended/         # D/E; generated on Colab GPU, saved to Drive
   record_features_v2/           # optional CPU HGB
   cluster/
     delineator/                 # latest/best/history/metrics
@@ -84,9 +92,11 @@ artifacts/
     bert_*/ founder_*/ hubert_*/ qwen_*/
 ```
 
-GPU notebook потребляет готовые caches, сырые datasets ему для training не нужны.
+GPU training потребляет готовые caches. Для разрешённой GPU-генерации Qwen pseudo cache
+notebook также читает исходные ECG из Drive; повторного копирования teacher на локальную машину нет.
 Qwen base 1.7B/4B скачивается самим кластером в явно включённой ветке.
-На CPU нужны также holdout raw signals для identity-only exclusion registry, labels не используются для tuning.
+Для identity-only exclusion registry нужны holdout raw signals в месте подготовки pseudo cache
+(в Colab — Drive/data и Drive/LUDB); labels не используются для tuning.
 После изменения teacher/data/preprocessing cache stale: задайте новый output, не подменяйте provenance.
 
 HuBERT v2: canonical12leads, deterministic first10sec, <10sec исключаются, zero padding нет.

@@ -4,9 +4,17 @@
 Настроить `RUN_DELINEATION`, `RUN_BERT`, `RUN_FOUNDER`, `RUN_HUBERT_LORA`, `RUN_QWEN`.
 Все false по умолчанию; `RUN_SMOKE=False` полностью пропускает smoke перед full run.
 
+В Colab первая ячейка монтирует Drive, клонирует отсутствующий `/content/ECG` и подключает
+`ECG_DATA/artifacts` и `reports` симлинками. Optional `ECG_DATA/data` и `LUDB` также подключаются.
+Существующий непустой checkout/каталог не удаляется. Аргументы `subprocess.run` передаются списком.
+Зависимости устанавливаются только в Colab; обычный Jupyter bootstrap пропускает.
+
 GPU 1 обучает U-Net на LUDB + partial manual QTDB и optional Training_2 consistency.
-Выбранный checkpoint: `artifacts/cluster/delineator_qt.pt`. Вернуть его локально, выполнить CPU 2,
-перенести новые caches и запускать GPU 2. Notebook не генерирует teacher predictions on-the-fly.
+Выбранный checkpoint: `artifacts/cluster/delineator_qt.pt`. Для Beat-BERT выполнить CPU 2.
+Для Qwen C/D/E оставить checkpoint в Colab: `PREPARE_QWEN_PSEUDO_GPU=True` запускает отдельную
+генерацию pseudo-cache на CUDA (default batch256). `PSEUDO_IO_WORKERS=2` читает/фильтрует сигналы;
+CUDA-модель находится только в главном процессе. Готовые shards пропускаются при resume.
+Student затем читает cache, без повторного teacher inference на каждой training iteration.
 
 Qwen experiments: A LUDB, B LUDB+QT, C +Training_2 pseudo hard, D +extended pseudo hard,
 E +soft KD. Выбор `QWEN_EXPERIMENTS`, размеры `QWEN_SIZES=['1.7B']` или `['1.7B','4B']`.

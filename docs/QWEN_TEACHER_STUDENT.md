@@ -23,12 +23,28 @@ factory `pipelines.gpu.experiments.qwen_experiment` задаёт 40/80GB profile
 LUDB test, QT external, PTB9/10 и external records не участвуют в selection/training.
 Новые размеры/режимы имеют отдельные run directories. Supervised baseline не удалён.
 
-## CPU cache
+## Colab GPU cache
 
-`python -m pipelines.cpu.run prepare-qwen-pseudo --checkpoint artifacts/cluster/delineator_qt.pt --sources CPSC_EXTRA --output artifacts/qwen_pseudo_training2 --workers 4`
+В notebook включить `PREPARE_QWEN_PSEUDO_GPU=True`. C/D/E автоматически вызывают отдельный
+GPU preparation stage после появления teacher, до загрузки Qwen base:
 
-Extended pool задаётся явно `--sources CPSC_EXTRA PTBXL CPSC CHAPMAN NINGBO` и отдельным output.
-CPU inference делается один раз; GPU student не загружает U-Net. Один record даёт детерминированное
+```python
+from pipelines.gpu.colab import prepare_qwen_pseudo_gpu
+prepare_qwen_pseudo_gpu(
+    output='artifacts/qwen_pseudo_extended',
+    sources=['CPSC_EXTRA','PTBXL','CPSC','CHAPMAN','NINGBO'],
+    checkpoint='artifacts/cluster/delineator_qt.pt',
+    batch_size=256, workers=2,
+)
+```
+
+Исходные `data/` и `LUDB/`, catalog и manual teacher-training manifest должны быть доступны
+через Drive. U-Net работает батчами на CUDA, workers только читают/фильтруют входы.
+Полностью готовый cache не вызывает teacher forward; частичный продолжается по готовым shards.
+Выход сохраняется в Drive/artifacts; CPU fallback command остаётся доступной как optional baseline.
+
+Extended pool задаётся явно в sources и отдельным output.
+Teacher inference делается один раз; student не загружает U-Net. Один record даёт детерминированное
 первое10sec окно, leadII или первый доступный lead. Общая фильтрация/resampling250Hz и normalization
 совпадают с input teacher; edge125 samples игнорируются. Неполные короткие записи не дополняются нулями.
 
@@ -92,7 +108,7 @@ checkpoint SHA256 и последний лучший результат. По у
 для следующего плана нужен новый output и warm_start последней принятой модели.
 
 Teacher остаётся фиксированным, его pseudo cache не переписывается. При новом teacher
-сначала повторить CPU pseudo generation в новый cache. Сам рост доли примеси не устраняет
+сначала повторить GPU pseudo generation в новый cache. Сам рост доли примеси не устраняет
 ошибки teacher и не доказывает способность размечать все ЭКГ. Нужны ручные данные новых
 доменов и заранее фиксированный независимый test; validation тоже может переобучиться
 при неограниченном числе циклов, поэтому вечного auto-loop нет.

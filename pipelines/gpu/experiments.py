@@ -1,4 +1,4 @@
-"""Reproducible v2 profiles. Preparation stays in pipelines.cpu."""
+"""Reproducible v2 profiles, with optional Colab GPU pseudo-cache preparation."""
 from dataclasses import replace
 from pathlib import Path
 import json
@@ -41,7 +41,7 @@ def assert_qwen_inputs(cfg):
     if {r['source'] for r in manual if r['split']=='valid'}!={'LUDB','QTDB'}:raise ValueError('A–E require the same LUDB + manual QTDB validation protocol')
     if cfg.pseudo_root:
         sources='CPSC_EXTRA' if cfg.pseudo_root.endswith('training2') else 'CPSC_EXTRA PTBXL CPSC CHAPMAN NINGBO'
-        require_cache(cfg.pseudo_root,f'python -m pipelines.cpu.run prepare-qwen-pseudo --sources {sources} --checkpoint artifacts/cluster/delineator_qt.pt --output {cfg.pseudo_root} --workers 4',
+        require_cache(cfg.pseudo_root,f'In Colab enable PREPARE_QWEN_PSEUDO_GPU=True before RUN_QWEN; sources={sources}, output={cfg.pseudo_root}',
                       ('provenance.json','manifest.json','protected_registry.json'))
         require_train_sources(cfg.pseudo_root,sources.split())
 

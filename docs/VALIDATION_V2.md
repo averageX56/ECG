@@ -1,11 +1,14 @@
 # Проверки v2, 2026-09-07
 
-- Полный `python -m pytest -q`: 47 passed, 1 skipped. Skip относится к optional trained
+- Полный `python -m pytest -q`: 50 passed, 1 skipped. Skip относится к optional trained
   checkpoint, отсутствующему после ранее согласованной очистки.
 - Проверены split policy, AAMI mapping, cache/provenance SHA256 и stale rejection,
   immediate missing checkpoint, partial QT masks, duration policy, hard/soft losses,
   pseudo worker, warm start/resume, curriculum rollback и analysis bundle exclusions.
 - Общий notebook исполнен с выключенными training flags: загрузок Qwen и GPU обучения не было.
+- Дополнительно проверен batched pseudo-inference executor на CPU и CUDA (маленькая тестовая модель),
+  отсутствие teacher forward при cache resume и сохранение существующей базы при Colab attach.
+  Сам Google Colab/Drive runtime и полный GPU U-Net pseudo pool ещё не запускались.
 - Реальный audit: LUDB200, QT18, Training_2 3453 (3452 readable), CPSC6877,
   St Petersburg74, Georgia10344, PTB-XL21837.
 - Реальная CPU подготовка manual cache с workers2: LUDB train1680/valid360 lead-windows,

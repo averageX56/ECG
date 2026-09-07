@@ -250,3 +250,34 @@ def test_curriculum_warm_starts_best_accepted_cycle_and_resumes(tmp_path,monkeyp
     assert [r['accepted'] for r in state['cycles']]==[True,False,True]
     assert seen[1].warm_start==seen[2].warm_start==str(root/'cycle_01/best.pt')
     run_curriculum(cfg);assert len(seen)==3
+
+
+@pytest.mark.parametrize('device',['cpu','cuda'])
+def test_batched_pseudo_inference_and_cached_resume(tmp_path,monkeypatch,device):
+    if device=='cuda' and not torch.cuda.is_available():pytest.skip('CUDA unavailable')
+    from ecg_project.data import qwen_pseudo as worker
+    rec=SimpleNamespace(signal=np.random.default_rng(4).normal(size=(2500,1)).astype('float32'),fs=250,leads=['II'])
+    monkeypatch.setattr(worker,'load_record',lambda _:rec)
+    monkeypatch.setattr(worker,'source_hashes',lambda _:dict(raw='sha256'))
+    rows=[dict(path='raw',record_id=str(i),source='CPSC',patient_id='',split='train') for i in range(3)]
+    model=torch.nn.Conv1d(1,4,1).to(device);batches=[]
+    hook=model.register_forward_pre_hook(lambda model,args:batches.append(len(args[0])))
+    items=[worker._input(r,tmp_path,'teacher',.95,[]) for r in rows]
+    result=list(worker.batched_results(items,tmp_path,model,device,2,.95))
+    assert batches==[2,1] and len(result)==3
+    with np.load(tmp_path/'CPSC_0.npz') as z:
+        with torch.no_grad():expected=model(torch.from_numpy(z['x'][None]).to(device))[0].cpu().numpy()
+        np.testing.assert_allclose(z['logits'],expected,atol=1e-5)
+    batches.clear()
+    items=[worker._input(r,tmp_path,'teacher',.95,[]) for r in rows]
+    list(worker.batched_results(items,tmp_path,model,device,2,.95))
+    assert not batches  # A complete cache causes zero teacher forward passes.
+    hook.remove()
+
+
+def test_colab_attach_never_deletes_existing_base(tmp_path):
+    from pipelines.gpu.colab import attach_drive
+    root=tmp_path/'repo';drive=tmp_path/'drive';(root/'artifacts').mkdir(parents=True)
+    base=root/'artifacts/base.pt';base.write_bytes(b'keep')
+    with pytest.raises(FileExistsError,match='Nonempty local path'):attach_drive(root,drive)
+    assert base.read_bytes()==b'keep'

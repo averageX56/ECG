@@ -1,7 +1,9 @@
-"""CPU-only U-Net teacher inference, resumable logits and confidence masks."""
+"""Resumable teacher logits: CPU fallback or batched CUDA inference in Colab."""
 from pathlib import Path
 from functools import partial
 import json
+import time
+from itertools import islice
 import numpy as np
 import torch
 from ecg_project.data.io import load_record
@@ -31,39 +33,72 @@ def teacher_training_manifest(checkpoint):
     return training,expected
 
 
-def _one(row,root,checkpoint,tau,registry):
+def _input(row,root,teacher_hash,tau,registry):
     rec=load_record(row['path']);identity=source_hashes(row['path']);row=dict(row,signal_hash=signal_hash(rec))
     key=row['source']+'_'+str(row['record_id'])
     shard(root,key+'_source',dict(source_sha256=identity,signal_hash=row['signal_hash']),lambda:dict(checked=True))
     if not np.isfinite(rec.signal).all():return None,dict(source=row['source'],record_id=row['record_id'],reason='nonfinite_signal')
     try:assert_unprotected(row,registry)
     except ValueError as e:return None,dict(source=row['source'],record_id=row['record_id'],reason=str(e))
+    item=dict(row=row,key=key,identity=dict(source_sha256=identity,teacher_sha256=teacher_hash,signal_hash=row['signal_hash'],tau=tau))
+    if (Path(root)/(key+'.json')).exists():
+        shard(root,key,item['identity'],lambda:None)  # Validate completed shard before skipping inference.
+        item['cached']=True;return item,None
+    x=resample(preprocess(rec.signal,rec.fs),rec.fs)
+    if len(x)<2500:raise ValueError('Pseudo candidate shorter than 10 seconds')
+    ch=rec.leads.index('II') if 'II' in rec.leads else 0
+    item.update(x=normalize(x[:2500,ch:ch+1]).T,lead=rec.leads[ch],cached=False)
+    return item,None
+
+
+def _result(item,root,logits=None,tau=.95):
+    key=item['key'];row=item['row'];identity=item['identity']
     def compute():
-        x=resample(preprocess(rec.signal,rec.fs),rec.fs)
-        if len(x)<2500:raise ValueError('Pseudo candidate shorter than 10 seconds')
-        # Lead selection deterministic, no label-aware best-lead search.
-        ch=rec.leads.index('II') if 'II' in rec.leads else 0
-        signal=normalize(x[:2500,ch:ch+1]).T[None]
-        teacher=cached_predictor(checkpoint,'cpu').model
-        with torch.no_grad():logits=teacher(torch.from_numpy(signal)).float()[0].numpy()
-        if not np.isfinite(logits).all():raise FloatingPointError('Non-finite teacher logits')
+        if logits is None or not np.isfinite(logits).all():raise FloatingPointError('Non-finite/missing teacher logits')
         probability=torch.from_numpy(logits).softmax(0).numpy();confidence=probability.max(0)
-        valid=np.isfinite(signal[0,0]);valid[:125]=False;valid[-125:]=False
+        valid=np.isfinite(item['x'][0]);valid[:125]=False;valid[-125:]=False
         target=probability.argmax(0).astype(np.int64);target[(confidence<tau)|~valid]=-100
-        return dict(x=signal[0],logits=logits.astype(np.float32),confidence=confidence,target=target,valid=valid,
-            lead=rec.leads[ch],window_start=0.,window_end=10.)
-    path=shard(root,key,dict(source_sha256=identity,teacher_sha256=file_hash(checkpoint),signal_hash=row['signal_hash'],tau=tau),compute)
+        return dict(x=item['x'],logits=logits.astype(np.float32),confidence=confidence,target=target,valid=valid,
+            lead=item['lead'],window_start=0.,window_end=10.)
+    path=shard(root,key,identity,compute)
     with np.load(path) as z:
         known=z['target']>=0;counts=np.bincount(z['target'][known],minlength=4)
-        result=dict(row,key=key,split='train',source_sha256=identity,teacher_sha256=file_hash(checkpoint),
+        result=dict(row,key=key,split='train',source_sha256=identity['source_sha256'],teacher_sha256=identity['teacher_sha256'],
             preprocessing=VERSION,window_start=0.,window_end=10.,lead=str(z['lead']),samples=len(known),accepted=int(known.sum()),
             confidence_sum=float(z['confidence'].sum()),class_counts=counts.tolist())
     return result,None
 
 
+def _one(row,root,checkpoint,tau,registry):
+    item,reason=_input(row,root,file_hash(checkpoint),tau,registry)
+    if reason:return None,reason
+    logits=None
+    if not item['cached']:
+        teacher=cached_predictor(checkpoint,'cpu').model
+        with torch.inference_mode():logits=teacher(torch.from_numpy(item['x'][None])).float()[0].numpy()
+    return _result(item,root,logits,tau)
+
+
+def batched_results(inputs,root,model,device,batch_size,tau):
+    """All CUDA work stays in the parent; spawned workers only load/filter signals."""
+    iterator=iter(inputs)
+    while chunk:=list(islice(iterator,batch_size)):
+        fresh=[item for item,reason in chunk if reason is None and not item['cached']]
+        logits=iter(())
+        if fresh:
+            x=torch.from_numpy(np.stack([item['x'] for item in fresh])).to(device)
+            with torch.inference_mode():pred=model(x).float().cpu().numpy()
+            logits=iter(pred)
+        for item,reason in chunk:
+            if reason:yield None,reason
+            else:yield _result(item,root,None if item['cached'] else next(logits),tau)
+
+
 def prepare(output='artifacts/qwen_pseudo_inputs',sources=('CPSC_EXTRA',),checkpoint=CANONICAL_DELINEATOR,
-            catalog='artifacts/catalog.csv',workers=None,tau=.95):
+            catalog='artifacts/catalog.csv',workers=None,tau=.95,device='cpu',batch_size=256):
     require_checkpoint(checkpoint)
+    if device not in ('cpu','cuda') or batch_size<1:raise ValueError('Invalid inference device/batch size')
+    if device=='cuda' and not torch.cuda.is_available():raise RuntimeError('CUDA pseudo generation requested; enable a GPU runtime in Colab')
     teacher_rows,teacher_manifest_hash=teacher_training_manifest(checkpoint)
     if not 0<tau<=1:raise ValueError('Confidence threshold must be in (0,1]')
     frame=build_record_manifest(catalog,sources,include_holdout=False)
@@ -74,12 +109,30 @@ def prepare(output='artifacts/qwen_pseudo_inputs',sources=('CPSC_EXTRA',),checkp
     for row in teacher_rows:assert_unprotected(row,protected)
     rows=[dict(path=r.path,source=r.source_key,record_id=str(r.record_id),patient_id=r.patient_id,split='train') for r in frame.itertuples()]
     for r in rows:assert_unprotected(r,protected)
-    root=begin_cache(output,dict(preprocessing=VERSION,teacher_sha256=file_hash(checkpoint),teacher_training_manifest_sha256=teacher_manifest_hash,tau=tau,rows=rows,registry=registry))
+    root=begin_cache(output,dict(preprocessing=VERSION,teacher_sha256=file_hash(checkpoint),teacher_training_manifest_sha256=teacher_manifest_hash,tau=tau,rows=rows,registry=registry,inference_device=device))
     atomic_json(root/'protected_registry.json',registry)
     results=[];excluded=[]
-    for row,reason in ordered_map(partial(_one,root=str(root),checkpoint=checkpoint,tau=tau,registry=str(root/'protected_registry.json')),rows,workers):
-        if row:results.append(row)
-        else:excluded.append(reason)
+    start=time.monotonic();status='complete';old_tf32=torch.backends.cudnn.allow_tf32
+    old_matmul=torch.backends.cuda.matmul.allow_tf32
+    try:
+        if device=='cuda':
+            from ecg_project.models.segmentation import Predictor
+            torch.cuda.reset_peak_memory_stats();torch.backends.cudnn.allow_tf32=False;torch.backends.cuda.matmul.allow_tf32=False
+            teacher=Predictor(checkpoint,'cuda').model
+            inputs=ordered_map(partial(_input,root=str(root),teacher_hash=file_hash(checkpoint),tau=tau,registry=str(root/'protected_registry.json')),rows,workers)
+            iterator=batched_results(inputs,root,teacher,device,batch_size,tau)
+        else:iterator=ordered_map(partial(_one,root=str(root),checkpoint=checkpoint,tau=tau,registry=str(root/'protected_registry.json')),rows,workers)
+        from tqdm.auto import tqdm
+        for row,reason in tqdm(iterator,total=len(rows),desc=f'Qwen pseudo ({device})',unit='record'):
+            if row:results.append(row)
+            else:excluded.append(reason)
+    except BaseException:status='interrupted';raise
+    finally:
+        atomic_json(root/'preparation_run.json',dict(status=status,device=device,batch_size=batch_size if device=='cuda' else 1,
+            records_completed=len(results),records_per_second=len(results)/max(time.monotonic()-start,1e-9),
+            max_memory_allocated=torch.cuda.max_memory_allocated() if device=='cuda' else 0,
+            max_memory_reserved=torch.cuda.max_memory_reserved() if device=='cuda' else 0))
+        torch.backends.cudnn.allow_tf32=old_tf32;torch.backends.cuda.matmul.allow_tf32=old_matmul
     # Exact train duplicates do not receive additional sampling weight.
     seen=set();unique=[]
     for r in results:
@@ -96,6 +149,7 @@ def prepare(output='artifacts/qwen_pseudo_inputs',sources=('CPSC_EXTRA',),checkp
             mean_teacher_confidence=sum(r['confidence_sum'] for r in unique if r['source']==s)/sum(r['samples'] for r in unique if r['source']==s),
             class_counts=np.sum([r['class_counts'] for r in unique if r['source']==s],axis=0).tolist()) for s in sorted({r['source'] for r in unique})})
     publish(root,dict(preprocessing=VERSION,teacher_sha256=file_hash(checkpoint),source_datasets=list(sources),confidence_threshold=tau,
+        inference_device=device,inference_precision='float32',
         teacher_training_manifest_sha256=teacher_manifest_hash,teacher_training_overlap_checked=True,
         temperature_scaled=False,stored='unscaled_logits',class_names=['background','P','QRS','T'],
         excluded_cohorts='LUDB valid/test; QTDB manual valid and external; PTB fold9/10; Georgia; StP',**stats),
