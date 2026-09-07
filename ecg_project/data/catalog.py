@@ -6,6 +6,10 @@ import pandas as pd
 from ecg_project.data.io import header
 from ecg_project.utils import save_json
 from tqdm.auto import tqdm
+from ecg_project.processing.parallel import ordered_map
+
+
+def _read_header(path):return path,header(path)
 
 TARGETS = {
     'AF': ['164889003','282825002','426749004','314208002'],
@@ -19,7 +23,7 @@ TARGETS = {
     'IVCD': ['713427006','59118001','713426002','164909002','698252002','6374002','82226007','251120003'],
 }
 
-def audit(root=".", output="artifacts/catalog.csv"):
+def audit(root=".", output="artifacts/catalog.csv",workers=None):
     root = Path(root)
     rows = []
     summaries = {}
@@ -27,6 +31,7 @@ def audit(root=".", output="artifacts/catalog.csv"):
     ptbpath = root / "artifacts/ptbxl_database.csv"
     ptb = pd.read_csv(ptbpath).set_index("ecg_id") if ptbpath.exists() else None
 
+    if not (root/'data').is_dir():raise FileNotFoundError('Missing data directory')
     directories = [root / "LUDB", *sorted((root / "data").iterdir())]
 
     for directory in tqdm(directories, desc="Datasets", unit="dataset"):
@@ -35,15 +40,14 @@ def audit(root=".", output="artifacts/catalog.csv"):
 
         counts = Counter()
         dx = Counter()
-        paths = sorted(directory.glob("*.hea"))
+        paths = sorted(directory.rglob("*.hea"))
 
-        for p in tqdm(
-            paths,
+        for p,h in tqdm(
+            ordered_map(_read_header,paths,workers),total=len(paths),
             desc=directory.name,
             unit="record",
             leave=False,
         ):
-            h = header(p)
             codes = h["labels"]
             meta = h["metadata"]
             data = p.parent / h["channels"][0][0]
@@ -87,6 +91,8 @@ def audit(root=".", output="artifacts/catalog.csv"):
                 readable=data.exists(),
                 referenced_format=data.suffix,
                 modified_header=(source != "LUDB" and data.suffix == ".dat"),
+                lead_availability=';'.join(c[-1] for c in h['channels']),
+                header_sha256=file_hash(p),
             )
 
             row.update(
@@ -134,6 +140,9 @@ def audit(root=".", output="artifacts/catalog.csv"):
         flush=True,
     )
 
+    from ecg_project.data.cache import atomic_json
+    atomic_json(Path(output).with_suffix('.provenance.json'),dict(preprocessing='metadata_audit_v2',catalog_sha256=file_hash(output),
+        source_headers={r['path']:r['header_sha256'] for r in rows},targets=TARGETS))
     return frame
 
 def ludb_split(ids, seed=42):

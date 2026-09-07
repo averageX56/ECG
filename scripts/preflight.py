@@ -8,13 +8,13 @@ ROOT=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser()
 parser.add_argument('--profile',choices=['smoke','bert','founder','delineation','lora','qlora','qwen','final'],default='final')
 args=parser.parse_args()
-required={'smoke':['artifacts/beat_features_qt/manifest.json','LUDB/1.hea','artifacts/delineator_qt.pt'],
-          'bert':['artifacts/beat_features_qt/manifest.json'],
-          'founder':['artifacts/catalog.csv','data/WFDB_PTB-XL','artifacts/ecgfounder/1_lead_ECGFounder.pth','artifacts/ecgfounder/net1d.py'],
-          'delineation':['LUDB','data/qtdb_external','artifacts/catalog.csv'],
-          'lora':['artifacts/hubert_inputs_full/signals.npy','artifacts/hubert_inputs_full/manifest.csv','artifacts/hubert_inputs_full/provenance.json','artifacts/hubert_large/model.safetensors','artifacts/hubert_large/config.json'],
-          'qlora':['artifacts/hubert_inputs_full/signals.npy','artifacts/hubert_inputs_full/manifest.csv','artifacts/hubert_inputs_full/provenance.json','artifacts/hubert_large/model.safetensors','artifacts/hubert_large/config.json'],
-          'qwen':['artifacts/qwen_delineation_inputs/provenance.json','artifacts/qwen_delineation_inputs/train_x.npy','artifacts/qwen_delineation_inputs/train_y.npy','artifacts/qwen_delineation_inputs/valid_x.npy','artifacts/qwen_delineation_inputs/valid_y.npy','artifacts/qwen3_4b/config.json','artifacts/qwen3_4b/provenance.json'],
+required={'smoke':['artifacts/beat_features_v2/manifest.json','LUDB/1.hea','artifacts/cluster/delineator_qt.pt'],
+          'bert':['artifacts/beat_features_v2/manifest.json'],
+          'founder':['artifacts/founder_inputs_v2/signals.npy','artifacts/founder_inputs_v2/provenance.json','artifacts/ecgfounder/1_lead_ECGFounder.pth','artifacts/ecgfounder/net1d.py'],
+          'delineation':['artifacts/delineator_inputs_v2/provenance.json','artifacts/delineator_inputs_v2/train_x.npy'],
+          'lora':['artifacts/hubert_inputs_v2/signals.npy','artifacts/hubert_inputs_v2/manifest.csv','artifacts/hubert_inputs_v2/provenance.json','artifacts/hubert_large/model.safetensors','artifacts/hubert_large/config.json'],
+          'qlora':['artifacts/hubert_inputs_v2/signals.npy','artifacts/hubert_inputs_v2/manifest.csv','artifacts/hubert_inputs_v2/provenance.json','artifacts/hubert_large/model.safetensors','artifacts/hubert_large/config.json'],
+          'qwen':['artifacts/qwen_delineation_inputs_v2/provenance.json','artifacts/qwen_delineation_inputs_v2/train_x.npy','artifacts/qwen_delineation_inputs_v2/train_y.npy','artifacts/qwen_delineation_inputs_v2/valid_x.npy','artifacts/qwen_delineation_inputs_v2/valid_y.npy'],
           'final':['configs/final_pipeline.json']}[args.profile]
 missing=[p for p in required if not (ROOT/p).exists()]
 if args.profile=='final' and not missing:

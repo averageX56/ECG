@@ -71,7 +71,7 @@ def fit_tokens(records):
     return dict(pca=pca,median=med,scale=scale)
 
 
-def score(records,probabilities):
+def score(records,probabilities,selection_classes=('N','S','V','F')):
     truth=[];pred=[];unmatched=np.zeros(5,int);per_record={}
     for r,p in zip(records,probabilities):
         if r['split']!='valid':continue
@@ -85,7 +85,7 @@ def score(records,probabilities):
         tp=int(((truth==i)&(pred==i)).sum());n=int((pred==i).sum()+unmatched[i])
         report[c].update(end_to_end_f1=2*tp/(ref+n) if ref+n else 0,reference=ref)
     return dict(validation=report,per_record=per_record,
-        selection_score=float(np.mean([report[c]['end_to_end_f1'] for c in ['N','S','V','F']])))
+        selection_score=float(np.mean([report[c]['end_to_end_f1'] for c in selection_classes])))
 
 
 def encode(model,records,device):

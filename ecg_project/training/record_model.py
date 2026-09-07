@@ -20,41 +20,44 @@ def _prepare_one_record(row,output,checkpoint,device):
     row=pd.Series(row)
     name=row.source+'_'+row.record_id;cache=out/(name+'.npz')
     try:
-        p=Path(row.path);signal_path=p.with_suffix('.mat')
-        digest=file_hash(signal_path)
+        from ecg_project.data.io import header
+        p=Path(row.path);signal_paths=sorted({p.parent/c[0] for c in header(p)['channels']})
+        digest=hashlib.sha256(''.join(file_hash(q) for q in signal_paths).encode()).hexdigest()
         header_digest=file_hash(p)
         if cache.exists():
             with np.load(cache) as cached:
-                if str(cached['model_hash'])!=model_hash or str(cached['signal_hash'])!=digest or str(cached['header_hash'])!=header_digest:
+                if str(cached['model_hash'])!=model_hash or str(cached['signal_hash'])!=digest or str(cached['header_hash'])!=header_digest or str(cached.get('preprocessing',''))!='record_features_v2':
                     raise ValueError('Stale cache: choose a fresh output directory after changing model/data.')
         else:
             # Long records: keep all windows in the analysis CLI; record benchmark uses first 30s and marks this.
             rec=load_record(p,stop=round(min(30,float(row.duration_s))*float(row.fs)))
             f,w,qc=extract_record(rec,predictor)
             np.savez_compressed(cache,interval=np.array(list(f.values()),np.float32),waveform=np.array(list(w.values()),np.float32),
-                interval_names=np.array(list(f)),waveform_names=np.array(list(w)),signal_hash=digest,header_hash=header_digest,model_hash=model_hash)
+                interval_names=np.array(list(f)),waveform_names=np.array(list(w)),signal_hash=digest,header_hash=header_digest,model_hash=model_hash,preprocessing='record_features_v2')
         item=row.to_dict();item.update(cache=str(cache),signal_hash=digest,analyzed_seconds=min(30,float(row.duration_s)))
         return item,None
     except Exception as e:
+        if 'Stale cache' in str(e):raise
         return None,dict(record=name,error=repr(e))
 
 
-def prepare(catalog='artifacts/catalog.csv',output='artifacts/record_features',limit=0,device='cpu',checkpoint='artifacts/delineator.pt'):
-    seed_all();frame=pd.read_csv(catalog).fillna('');frame=frame[(frame.source!='LUDB') & (frame.readable==True) & (frame.has_labels==True)].copy()
-    # Entire sources remain held out. Unknown identities never get random record splits.
-    frame['split']='train'
-    frame.loc[frame.source=='WFDB_GEORGIA','split']='external'
-    frame.loc[frame.source=='Training_StPetersburg','split']='external_long'
-    frame.loc[(frame.source=='WFDB_PTB-XL') & (frame.fold==9),'split']='valid'
-    frame.loc[(frame.source=='WFDB_PTB-XL') & (frame.fold==10),'split']='test'
+def prepare(catalog='artifacts/catalog.csv',output='artifacts/record_features',limit=0,device='cpu',checkpoint='artifacts/cluster/delineator_qt.pt',sources=None):
+    from ecg_project.data.cache import require_checkpoint
+    require_checkpoint(checkpoint)
+    from ecg_project.data.policy import build_record_manifest
+    seed_all();frame=build_record_manifest(catalog,sources);frame=frame[(frame.readable==True) & (frame.has_labels==True)].copy()
+    # Shared splits are assigned before any optional train-positive sampling.
     if limit:
         # Explicit exploratory sample, chosen independently of diagnosis.
         sampled=frame.groupby(['source','split'],group_keys=False).sample(frac=1,random_state=42).groupby(['source','split'],group_keys=False).head(limit)
         # Retain all rare TRAINING positives, without consulting validation/test labels.
         rare=frame[(frame.split=='train') & (frame[['PVC','AVB2','AVB3','VT']].astype(int).max(axis=1)>0)]
         frame=pd.concat([sampled,rare]).drop_duplicates(['source','record_id'])
+    from ecg_project.data.policy import assign_splits
+    frame=assign_splits(frame)
     assert_disjoint(frame)
-    out=Path(output);out.mkdir(parents=True,exist_ok=True)
+    from ecg_project.data.cache import begin_cache,publish
+    out=begin_cache(output,dict(preprocessing='record_features_v2',catalog_sha256=file_hash(catalog),checkpoint_sha256=file_hash(checkpoint),limit=limit,sources=sources))
     from functools import partial
     from ecg_project.processing.parallel import ordered_map
     rows=[];fail=[];start=time.monotonic()
@@ -76,6 +79,7 @@ def prepare(catalog='artifacts/catalog.csv',output='artifacts/record_features',l
     assert_disjoint(result)
     result.to_csv(out/'manifest.csv',index=False);duplicates.to_csv(out/'duplicates.csv',index=False)
     save_json(out/'extraction.json',dict(seconds=time.monotonic()-start,failures=fail,records=len(result),exploratory_limit_per_source_split=limit))
+    publish(out,dict(preprocessing='record_features_v2',checkpoint_sha256=file_hash(checkpoint)),[out/'manifest.csv',*[Path(p) for p in result.cache]])
     return result
 
 def load_matrix(manifest):

@@ -14,7 +14,11 @@ def main():
     os.environ['ECG_CPU_WORKERS']=str(worker_args.workers)
     for name in ('OMP_NUM_THREADS','MKL_NUM_THREADS','OPENBLAS_NUM_THREADS','NUMEXPR_NUM_THREADS'):
         os.environ[name]='1'
-    parser = argparse.ArgumentParser(description='Local CPU pipeline stages',epilog='Use --workers N before or after a stage (default: up to 4).')
+    v2_stages={'prepare-qwen','prepare-hubert','prepare-founder','prepare-beats','prepare-unlabeled','prepare-records','prepare-record-datasets','prepare-qwen-pseudo'}
+    if remaining and remaining[0] in v2_stages:
+        from pipelines.cpu.v2 import main as v2_main
+        return v2_main(remaining)
+    parser = argparse.ArgumentParser(description='Local CPU pipeline stages',epilog='Use --workers N before or after a stage (default: up to 4). V2: '+', '.join(sorted(v2_stages))+'. Use STAGE --help for source/config arguments.')
     sub = parser.add_subparsers(dest='stage', required=True)
     for name in ('audit', 'prepare-beats', 'prepare-records', 'train-beats', 'train-records', 'run'):
         sub.add_parser(name, add_help=False)

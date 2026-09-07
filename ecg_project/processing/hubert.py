@@ -4,6 +4,21 @@ from scipy.signal import firwin,filtfilt,resample,decimate
 
 LEADS=['I','II','III','aVR','aVL','aVF','V1','V2','V3','V4','V5','V6']
 VERSION='hubert_fir005_47_minmax500_flatdecimate5_twoview_v1'
+VERSION_V2='hubert_fir005_47_twoview_fixed10s_no_padding_v2'
+
+
+def select_window(rec,start_seconds=0):
+    from copy import copy
+    if start_seconds<0:raise ValueError('Negative window start')
+    n=round(10*rec.fs);start=round(start_seconds*rec.fs)
+    if start+n>len(rec.signal):raise ValueError('shorter_than_10_seconds; excluded without padding')
+    selected=copy(rec);selected.signal=rec.signal[start:start+n].copy()
+    return selected,dict(original_duration=len(rec.signal)/rec.fs,window_start=start/rec.fs,window_end=(start+n)/rec.fs)
+
+
+def prepare_signal_v2(rec,start_seconds=0):
+    selected,metadata=select_window(rec,start_seconds)
+    return prepare_signal(selected),metadata
 
 
 def prepare_signal(rec):

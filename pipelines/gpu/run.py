@@ -9,7 +9,7 @@ def require_a100_memory():
     return torch.cuda.get_device_properties(0).total_memory / 2**30
 
 
-def train_hubert(input_root='artifacts/hubert_inputs_full', output_root='artifacts/cluster', epochs=30, include_qlora=True):
+def train_hubert(input_root='artifacts/hubert_inputs_v2', output_root='artifacts/cluster', epochs=30, include_qlora=True):
     vram = require_a100_memory()
     root = Path(input_root)
     for name in ('manifest.csv', 'signals.npy', 'provenance.json'):
@@ -33,15 +33,16 @@ def train_bert(config):
 
 def train_qwen(config=None):
     vram=require_a100_memory()
-    from ecg_project.training.qwen_delineation import QwenConfig,train
-    config=config or QwenConfig(batch_size=8 if vram>60 else 4)
-    return train(config)
+    from ecg_project.training.qwen_delineation import QwenConfig,train as baseline
+    if isinstance(config,QwenConfig):return baseline(config)
+    from pipelines.gpu.experiments import qwen_experiment,run_qwen
+    return run_qwen(config or qwen_experiment(vram_gb=vram))
 
 
 def main():
     import argparse
     parser = argparse.ArgumentParser(description='A100 HuBERT frozen/LoRA comparison')
-    parser.add_argument('--input-root', default='artifacts/hubert_inputs_full')
+    parser.add_argument('--input-root', default='artifacts/hubert_inputs_v2')
     parser.add_argument('--output-root', default='artifacts/cluster')
     parser.add_argument('--epochs', type=int, default=30)
     train_hubert(**vars(parser.parse_args()))

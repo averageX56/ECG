@@ -16,6 +16,7 @@ from ecg_project.models.lora import adapter_state,load_adapter
 from ecg_project.training.cluster_training import _atomic_save
 from ecg_project.evaluation.metrics import multilabel_metrics
 from ecg_project.utils import seed_all,save_json
+from ecg_project.training.telemetry import tracked
 
 
 def _prepare_hubert_path(path):
@@ -70,6 +71,7 @@ class LoRAConfig:
     quantization:str='none'
 
 
+@tracked
 def run(cfg:LoRAConfig):
     seed_all();start=time.monotonic();root=Path(cfg.input_root);out=Path(cfg.output);out.mkdir(parents=True,exist_ok=True)
     if cfg.rank<0 or min(cfg.batch_size,cfg.accumulation,cfg.epochs,cfg.patience)<1:raise ValueError('Invalid configuration')
@@ -81,9 +83,14 @@ def run(cfg:LoRAConfig):
     elif device=='cuda' and torch.cuda.get_device_properties(0).total_memory<35*2**30:
         raise ValueError('On a local small GPU set local_minutes explicitly; unlimited mode is for the cluster')
     frame=pd.read_csv(root/'manifest.csv');provenance=json.loads((root/'provenance.json').read_text())
-    if provenance['preprocessing']!=VERSION:raise ValueError('Preprocessing mismatch')
-    if not frame.split.isin(['train','valid']).all() or frame.patient_id.isna().any():raise ValueError('Invalid splits/identities')
-    if set(frame.loc[frame.split=='train','patient_id']) & set(frame.loc[frame.split=='valid','patient_id']):raise ValueError('Patient overlap')
+    from ecg_project.processing.hubert import VERSION_V2
+    if provenance['preprocessing'] not in (VERSION,VERSION_V2):raise ValueError('Preprocessing mismatch')
+    if provenance['preprocessing']==VERSION_V2:
+        from ecg_project.data.cache import validate_cache
+        validate_cache(root,VERSION_V2)
+    if not frame.split.isin(['train','valid']).all():raise ValueError('Invalid splits')
+    from ecg_project.data.catalog import assert_disjoint
+    assert_disjoint(frame)
     tr=np.flatnonzero(frame.split.to_numpy()=='train');va=np.flatnonzero(frame.split.to_numpy()=='valid')
     classes=[c for c in TARGETS if frame.iloc[tr][c].sum()>=20 and (1-frame.iloc[tr][c]).sum()>=20]
     if not classes:raise ValueError('Insufficient training label support')
@@ -94,6 +101,7 @@ def run(cfg:LoRAConfig):
     identity=dict(config={k:v for k,v in asdict(cfg).items() if k not in ['output','epochs','local_minutes']},
         model_sha256=file_hash(Path(cfg.model_root)/'model.safetensors'),manifest_sha256=file_hash(root/'manifest.csv'),
         signals_sha256=file_hash(root/'signals.npy'),classes=classes,train_indices=tr.tolist(),valid_indices=va.tolist())
+    if provenance['preprocessing']==VERSION_V2:identity['preprocessing']=VERSION_V2
     if identity['signals_sha256']!=provenance['signals_sha256']:raise ValueError('Signal cache modified')
     if cfg.quantization not in ('none','nf4'):raise ValueError('Unknown quantization mode')
     if cfg.quantization=='nf4' and not cfg.rank:raise ValueError('QLoRA requires positive adapter rank')
@@ -135,9 +143,10 @@ def run(cfg:LoRAConfig):
             for module in model.backbone.modules():
                 from ecg_project.models.lora import LoRALinear
                 if isinstance(module,LoRALinear):module.train()
-            optimizer.zero_grad();losses=[];n=min(len(loader),cfg.max_batches) if cfg.max_batches else len(loader)
+            optimizer.zero_grad();losses=[];examples=0;n=min(len(loader),cfg.max_batches) if cfg.max_batches else len(loader)
             for k,(x,label) in enumerate(loader):
                 if k>=n:break
+                examples+=len(x)
                 if cfg.local_minutes is not None and time.monotonic()-start>cfg.local_minutes*60:raise TimeoutError('Local run budget reached')
                 with torch.autocast(device_type=device,dtype=torch.bfloat16,enabled=amp):
                     logits=model(x.to(device));loss=criterion(logits,label.to(device))
@@ -154,10 +163,10 @@ def run(cfg:LoRAConfig):
                     pred.append(p.float().cpu().numpy())
             prob=np.concatenate(pred);report=multilabel_metrics(y[va],prob,classes)
             metric=report['macro_auroc'];metric=-1. if metric is None else float(metric)
-            history.append(dict(epoch=epoch+1,loss=float(np.mean(losses)),valid_auroc=metric,seconds=time.monotonic()-start))
+            history.append(dict(epoch=epoch+1,loss=float(np.mean(losses)),valid_auroc=metric,seconds=time.monotonic()-start,examples=examples))
             if metric>best or not (out/'best.pt').exists():
                 best=metric;stale=0;_atomic_save(dict(adapter=adapter_state(model),identity=identity),out/'best.pt')
-                save_json(out/'best_metrics.json',dict(**report,evaluation_status=provenance['evaluation_status'],test_accessed=False))
+                save_json(out/'best_metrics.json',dict(**report,evaluation_status=provenance['evaluation_status'],test_accessed=False,best_epoch=epoch+1))
                 np.savez_compressed(out/'valid_predictions.npz',truth=y[va],probability=prob,classes=np.array(classes),records=frame.iloc[va].record_id.astype(str).to_numpy(dtype=str))
             else:stale+=1
             checkpoint(epoch+1);save_json(out/'history.json',history);print(history[-1],flush=True)
@@ -174,6 +183,7 @@ def run(cfg:LoRAConfig):
 
 
 def predict_record(path,run_root,model_root='artifacts/hubert_large',device='cpu'):
+    from ecg_project.processing.hubert import VERSION_V2
     root=Path(run_root);config=json.loads((root/'config.json').read_text())
     saved=torch.load(root/'best.pt',map_location='cpu',weights_only=True)
     if file_hash(Path(model_root)/'model.safetensors')!=saved['identity']['model_sha256']:raise ValueError('Base model mismatch')
@@ -181,7 +191,11 @@ def predict_record(path,run_root,model_root='artifacts/hubert_large',device='cpu
     if quantization=='nf4' and not str(device).startswith('cuda'):raise ValueError('QLoRA inference requires device=cuda')
     model=HubertClassifier(load_backbone(model_root,quantization),len(config['classes']),config['rank'],config['alpha'],tuple(config['targets']),False)
     load_adapter(model,saved['adapter']);model.to(device).eval()
-    x=prepare_signal(path if hasattr(path,'signal') else load_record(path))
+    rec=path if hasattr(path,'signal') else load_record(path)
+    if saved['identity'].get('preprocessing')==VERSION_V2:
+        from ecg_project.processing.hubert import prepare_signal_v2
+        x,_=prepare_signal_v2(rec)
+    else:x=prepare_signal(rec)
     with torch.no_grad():prob=model(torch.from_numpy(x[None]).to(device)).sigmoid()[0].cpu().numpy()
     return dict(scores=dict(zip(config['classes'],map(float,prob))),model='HuBERT-ECG Large',rank=config['rank'],
         evaluation_status=config['evaluation_status'],calibrated=False)

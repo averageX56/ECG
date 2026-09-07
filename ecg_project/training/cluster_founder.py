@@ -13,8 +13,10 @@ from ecg_project.evaluation.metrics import multilabel_metrics
 from ecg_project.utils import seed_all,save_json
 from tqdm.auto import tqdm
 from itertools import islice
+from ecg_project.training.telemetry import tracked
 
 
+@tracked
 def train_founder_cluster(input_root='artifacts/founder_experiments',output='artifacts/cluster/founder_full',
                           epochs=100,batch_size=32,accumulation=1,workers=0,patience=15,max_batches=None):
     seed_all();start=time.monotonic();root=Path(input_root);out=Path(output);out.mkdir(parents=True,exist_ok=True)
@@ -22,7 +24,12 @@ def train_founder_cluster(input_root='artifacts/founder_experiments',output='art
     torch.backends.cuda.matmul.allow_tf32=True;torch.backends.cudnn.allow_tf32=True;torch.backends.cudnn.benchmark=True
     frame=pd.read_csv(root/'manifest.csv');tr=frame.split.to_numpy()=='train';va=frame.split.to_numpy()=='valid'
     if not (tr|va).all():raise ValueError('Only train/valid inputs accepted')
-    if set(frame.loc[tr,'patient_id']) & set(frame.loc[va,'patient_id']):raise ValueError('Patient leakage')
+    from ecg_project.data.catalog import assert_disjoint
+    assert_disjoint(frame)
+    cache_provenance=None
+    if (root/'provenance.json').exists():
+        from ecg_project.data.cache import validate_cache
+        cache_provenance=validate_cache(root)
     if (root/'signals.npy').exists():signals=np.load(root/'signals.npy',mmap_mode='r')
     else:
         with np.load(root/'inputs.npz') as z:signals=z['signal']
@@ -40,7 +47,9 @@ def train_founder_cluster(input_root='artifacts/founder_experiments',output='art
         batch_size=batch_size,shuffle=True,num_workers=workers,pin_memory=device=='cuda',persistent_workers=workers>0)
     latest=out/'latest.pt';begin=0;best=-1.;stale=0;history=[]
     config=dict(input_root=str(root),classes=classes,batch_size=batch_size,accumulation=accumulation,
-        manifest_sha256=file_hash(root/'manifest.csv'),max_batches=max_batches)
+        manifest_sha256=file_hash(root/'manifest.csv'),max_batches=max_batches,patience=patience,
+        signals_sha256=file_hash(root/'signals.npy' if (root/'signals.npy').exists() else root/'inputs.npz'),
+        base_sha256=file_hash('artifacts/ecgfounder/1_lead_ECGFounder.pth'),cache_provenance=cache_provenance)
     if latest.exists():
         saved=torch.load(latest,map_location=device,weights_only=True)
         if saved['config']!=config:raise ValueError('Resume input/config mismatch')
@@ -49,6 +58,9 @@ def train_founder_cluster(input_root='artifacts/founder_experiments',output='art
         torch.set_rng_state(saved['rng'].cpu())
         if device=='cuda':torch.cuda.set_rng_state_all([r.cpu() for r in saved['cuda_rng']])
     save_json(out/'config.json',dict(**config,epochs=epochs,train=int(tr.sum()),valid=int(va.sum()),unfrozen='all'))
+    if not latest.exists():
+        _atomic_save(dict(model=model.state_dict(),optimizer=optimizer.state_dict(),epoch=0,best=best,stale=stale,
+            history=history,config=config,rng=torch.get_rng_state(),cuda_rng=torch.cuda.get_rng_state_all() if device=='cuda' else []),latest)
     try:
         for epoch in tqdm(
             range(begin, epochs),
@@ -57,7 +69,8 @@ def train_founder_cluster(input_root='artifacts/founder_experiments',output='art
             desc="ECGFounder",
             unit="epoch",
         ):
-            model.train();optimizer.zero_grad();losses=[];n=min(len(loader),max_batches) if max_batches else len(loader)
+            if stale>=patience:break
+            model.train();optimizer.zero_grad();losses=[];examples=0;n=min(len(loader),max_batches) if max_batches else len(loader)
             batches = tqdm(
                 islice(loader, n),
                 total=n,
@@ -67,6 +80,7 @@ def train_founder_cluster(input_root='artifacts/founder_experiments',output='art
             )
 
             for k, (x, label) in enumerate(batches):
+                examples+=len(x)
                 with torch.autocast(device_type=device,dtype=torch.bfloat16,enabled=amp):
                     logits=model(x.to(device,non_blocking=True));loss=criterion(logits,label.to(device,non_blocking=True))
                     group=min(accumulation,n-(k//accumulation)*accumulation)
@@ -87,10 +101,11 @@ def train_founder_cluster(input_root='artifacts/founder_experiments',output='art
                     with torch.autocast(device_type=device,dtype=torch.bfloat16,enabled=amp):p=model(x.to(device)).sigmoid()
                     pp.append(p.float().cpu().numpy())
             prob=np.concatenate(pp);report=multilabel_metrics(y[va],prob,classes);metric=report['macro_auroc']
-            row=dict(epoch=epoch+1,loss=float(np.mean(losses)),valid_auroc=metric,seconds=time.monotonic()-start);history.append(row);print(row,flush=True)
-            if metric>best:
-                best=metric;stale=0;_atomic_save(model.state_dict(),out/'best.pt');save_json(out/'best_metrics.json',report)
-                np.savez_compressed(out/'valid_predictions.npz',truth=y[va],probability=prob,classes=np.array(classes),records=frame.loc[va,'record_id'].astype(str).to_numpy())
+            metric=-1. if metric is None else float(metric)
+            row=dict(epoch=epoch+1,loss=float(np.mean(losses)),valid_auroc=metric,seconds=time.monotonic()-start,examples=examples);history.append(row);print(row,flush=True)
+            if metric>best or not (out/'best.pt').exists():
+                best=metric;stale=0;_atomic_save(model.state_dict(),out/'best.pt');save_json(out/'best_metrics.json',dict(**report,best_epoch=epoch+1))
+                np.savez_compressed(out/'valid_predictions.npz',truth=y[va],probability=prob,classes=np.array(classes),records=frame.loc[va,'record_id'].astype(str).to_numpy(dtype=str))
             else:stale+=1
             _atomic_save(dict(model=model.state_dict(),optimizer=optimizer.state_dict(),epoch=epoch+1,best=best,stale=stale,
                 history=history,config=config,rng=torch.get_rng_state(),cuda_rng=torch.cuda.get_rng_state_all() if device=='cuda' else []),latest)

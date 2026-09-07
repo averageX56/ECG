@@ -68,6 +68,8 @@ def _prepare_one(p,output,checkpoint,device):
 
 
 def prepare(root='data/mit-bih',output='artifacts/beat_features',device='cpu',checkpoint='artifacts/delineator.pt'):
+    from ecg_project.data.cache import require_checkpoint
+    require_checkpoint(checkpoint)
     from functools import partial
     from ecg_project.processing.parallel import ordered_map
     seed_all();out=Path(output);out.mkdir(parents=True,exist_ok=True)

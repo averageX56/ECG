@@ -15,6 +15,7 @@ from ecg_project.experiments.representation_experiments import BeatBERT,Sequence
 from ecg_project.utils import seed_all,save_json
 from itertools import islice
 from tqdm.auto import tqdm
+from ecg_project.training.telemetry import tracked
 
 
 @dataclass
@@ -38,6 +39,9 @@ class ClusterConfig:
     gpu_resident: bool=True
     auto_batch: bool=True
     unlabeled_root: str|None=None
+    unlabeled_roots: list[str]|None=None
+    include_q: bool=True
+    min_selection_support: int=1
 
 
 def _atomic_save(obj,path):
@@ -111,6 +115,7 @@ def infer(model,records,device,radius,batch_size=128):
     return prob,latent
 
 
+@tracked
 def train_cluster(config:ClusterConfig):
     """Run from a notebook cell; interrupt safely, then rerun to resume last epoch.
 
@@ -127,10 +132,29 @@ def train_cluster(config:ClusterConfig):
     torch.set_num_threads(min(16,os.cpu_count() or 4))
     records=load_records(cfg.data_root)
     roots=[Path(cfg.data_root)]
-    if cfg.unlabeled_root:
-        extra=load_records(cfg.unlabeled_root)
+    extra_roots=list(cfg.unlabeled_roots or [])
+    if cfg.unlabeled_root and cfg.unlabeled_root not in extra_roots:extra_roots.append(cfg.unlabeled_root)
+    if extra_roots and cfg.pretrain_epochs<=0:raise ValueError('Extended SSL roots require pretrain_epochs > 0')
+    from ecg_project.data.cache import validate_cache
+    for cache_root in [cfg.data_root,*extra_roots]:
+        if (Path(cache_root)/'provenance.json').exists():validate_cache(cache_root)
+    for extra_root in extra_roots:
+        raw=json.loads((Path(extra_root)/'manifest.json').read_text())
+        if any(r['split']!='train' for r in raw):raise ValueError('SSL manifest contains validation/test/external records')
+        extra=load_records(extra_root)
         if any(np.any(r['y']>=0) or r['split']!='train' for r in extra):raise ValueError('Expected train-only unlabelled cache')
-        records+=extra;roots.append(Path(cfg.unlabeled_root))
+        records+=extra;roots.append(Path(extra_root))
+    if len({r['record'] for r in records})!=len(records):raise ValueError('Duplicate records across SSL/supervised roots')
+    patients={}
+    for r in records:
+        patient=r.get('patient_id') or r.get('patient')
+        if patient:
+            if patient in patients and patients[patient]!=r['split']:raise ValueError('Patient leakage across BERT inputs')
+            patients[patient]=r['split']
+    raw_support=np.bincount(np.concatenate([r['y'][r['y']>=0] for r in records if r['split']=='train']),minlength=5)
+    if not cfg.include_q:
+        for r in records:
+            if r['split']=='train':r['y']=np.where(r['y']==4,-1,r['y'])
     # Every feature file is hashed: data drift must not silently resume a run.
     digest=hashlib.sha256()
     for r in records:
@@ -145,7 +169,8 @@ def train_cluster(config:ClusterConfig):
     saved=None
     if latest.exists():
         saved=torch.load(latest,map_location='cpu',weights_only=True)
-        identity_keys=['dim','layers','radius','seed','batch_size','accumulation','learning_rate','pretrain_epochs','max_batches','amp','gpu_resident']
+        identity_keys=['dim','layers','radius','seed','batch_size','accumulation','learning_rate','pretrain_epochs','max_batches','amp','gpu_resident','include_q','min_selection_support']
+        saved['config'].setdefault('include_q',True);saved['config'].setdefault('min_selection_support',1)
         if saved['data_hash']!=data_hash or any(saved['config'].get(k)!=asdict(cfg)[k] for k in identity_keys):
             raise ValueError('Resume config or data differs; choose a fresh output directory')
     tokens=fit_tokens(records)
@@ -171,6 +196,12 @@ def train_cluster(config:ClusterConfig):
     valid=[r for r in records if r['split']=='valid']
     train_y=np.concatenate([r['y'][r['y']>=0] for r in records if r['split']=='train'])
     count=np.bincount(train_y,minlength=5);weight=np.sqrt(count.sum()/np.maximum(count,1));weight/=weight.mean()
+    selection_classes=[c for i,c in enumerate(['N','S','V','F']) if count[i]>=cfg.min_selection_support]
+    if not selection_classes:raise ValueError('No supported classes for selection')
+    support_report=dict(train_support=dict(zip(['N','S','V','F','Q'],map(int,count))),include_q=cfg.include_q,
+        original_train_support=dict(zip(['N','S','V','F','Q'],map(int,raw_support))),
+        selection_classes=selection_classes,classes_excluded_from_selection=[c for c in ['N','S','V','F','Q'] if c not in selection_classes])
+    save_json(out/'class_support.json',support_report)
     criterion=nn.CrossEntropyLoss(weight=torch.tensor(weight,dtype=torch.float32,device=device))
     def checkpoint():
         _atomic_save(dict(model=model.state_dict(),optimizer=optimizer.state_dict(),scaler=scaler.state_dict(),
@@ -187,7 +218,7 @@ def train_cluster(config:ClusterConfig):
             checkpoint();continue
         ds=Sequences(records,'train',labeled=not pretrain,radius=cfg.radius)
         loader=ResidentBatches(records,cfg.radius,actual_batch,not pretrain,device) if cfg.gpu_resident else DataLoader(ds,batch_size=actual_batch,shuffle=True,num_workers=cfg.workers,pin_memory=device=='cuda')
-        model.train();optimizer.zero_grad();losses=[]
+        model.train();optimizer.zero_grad();losses=[];examples=0
         n_batches = (
             min(len(loader), cfg.max_batches)
             if cfg.max_batches
@@ -204,6 +235,7 @@ def train_cluster(config:ClusterConfig):
         for k,(x,y) in enumerate(batches):
             if k>=n_batches:break
             x=x.to(device);y=y.to(device)
+            examples+=len(x)
             with torch.autocast(device_type=device,dtype=dtype,enabled=amp):
                 if pretrain:
                     mask=torch.rand(x.shape[:2],device=device)<.25;mask[:,x.shape[1]//2]=True
@@ -216,12 +248,13 @@ def train_cluster(config:ClusterConfig):
                 scaler.unscale_(optimizer);nn.utils.clip_grad_norm_(model.parameters(),1)
                 scaler.step(optimizer);scaler.update();optimizer.zero_grad()
         state['epoch']+=1
-        row=dict(stage=state['stage'],epoch=state['epoch'],loss=float(np.mean(losses)),seconds=time.monotonic()-start)
+        row=dict(stage=state['stage'],epoch=state['epoch'],loss=float(np.mean(losses)),seconds=time.monotonic()-start,examples=examples)
         if not pretrain:
-            pp,_=infer(model,valid,device,cfg.radius,actual_batch);report=score(valid,pp);row['valid_score']=report['selection_score']
+            pp,_=infer(model,valid,device,cfg.radius,actual_batch);report=score(valid,pp,selection_classes);row['valid_score']=report['selection_score']
             if report['selection_score']>state['best']:
                 state['best']=report['selection_score'];state['stale']=0
-                _atomic_save(model.state_dict(),out/'best.pt');save_json(out/'best_metrics.json',report)
+                state['best_epoch']=state['epoch']
+                _atomic_save(model.state_dict(),out/'best.pt');save_json(out/'best_metrics.json',dict(**report,**support_report,best_epoch=state['epoch']))
             else:state['stale']+=1
             if state['stale']>=cfg.patience:state['stage']='complete'
         history.append(row);save_json(out/'history.json',history);checkpoint();print(row,flush=True)
@@ -230,5 +263,9 @@ def train_cluster(config:ClusterConfig):
     for r,p,e in zip(valid,pp,emb):np.savez_compressed(out/('valid_'+r['record']+'.npz'),probability=p,embedding=e,truth=r['y'])
     save_json(out/'run.json',dict(seconds_this_invocation=time.monotonic()-start,device=device,
         parameters=sum(p.numel() for p in model.parameters()),max_cuda_bytes=torch.cuda.max_memory_allocated() if device=='cuda' else 0,
-        test_accessed=False,smoke=bool(cfg.max_batches),data_sha256=data_hash,status=state['stage'],actual_batch=actual_batch))
+        test_accessed=False,smoke=bool(cfg.max_batches),data_sha256=data_hash,status=state['stage'],actual_batch=actual_batch,
+        effective_batch=actual_batch*cfg.accumulation,best_epoch=state.get('best_epoch'),epochs_completed=len(history),
+        max_memory_allocated=torch.cuda.max_memory_allocated() if device=='cuda' else 0,
+        max_memory_reserved=torch.cuda.max_memory_reserved() if device=='cuda' else 0,
+        examples_per_second=sum(r.get('examples',0) for r in history)/max(time.monotonic()-start,1e-9)))
     return out
