@@ -1,6 +1,9 @@
 from pathlib import Path
 from collections import Counter
 import hashlib
+import errno
+import logging
+import time
 import numpy as np
 import pandas as pd
 from ecg_project.data.io import header
@@ -151,10 +154,29 @@ def ludb_split(ids, seed=42):
     return {p:('test' if i<nt else 'valid' if i<nt+nv else 'train') for i,p in enumerate(ids)}
 
 def file_hash(path):
-    h=hashlib.sha256()
-    with open(path,'rb') as f:
-        for b in iter(lambda:f.read(1<<20),b''):h.update(b)
-    return h.hexdigest()
+    """Hash the whole file, retrying a bounded number of storage read failures."""
+    retryable = {errno.EIO, errno.ETIMEDOUT,
+                 getattr(errno, 'EREMOTEIO', 121), getattr(errno, 'ESTALE', 116)}
+    delays = (1, 2, 4, 8)
+    for attempt in range(len(delays) + 1):
+        try:
+            # Reopen and reset the digest: a failed read may have consumed bytes.
+            h = hashlib.sha256()
+            with open(path, 'rb') as f:
+                for b in iter(lambda: f.read(1 << 20), b''):
+                    h.update(b)
+            return h.hexdigest()
+        except OSError as exc:
+            if exc.errno not in retryable:
+                raise
+            if attempt == len(delays):
+                raise OSError(exc.errno,
+                              f'Cannot hash file after {attempt + 1} attempts: {exc.strerror}',
+                              str(path)) from exc
+            logging.getLogger(__name__).warning(
+                'Storage read failed while hashing %s (%s); retry %d/%d in %ds',
+                path, exc, attempt + 1, len(delays), delays[attempt])
+            time.sleep(delays[attempt])
 
 def assert_disjoint(frame):
     for column in ('patient_id','signal_hash'):
