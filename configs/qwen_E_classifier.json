@@ -1,0 +1,19 @@
+{
+  "qwen_run": "artifacts/cluster/qwen_4b_E_curriculum",
+  "unet_checkpoint": "artifacts/cluster/delineator_qt.pt",
+  "catalog": "artifacts/catalog.csv",
+  "output": "artifacts/cluster/qwen_E_classifier",
+  "model_root": "artifacts/qwen3_4b",
+  "device": "cuda",
+  "epochs": 60,
+  "patience": 10,
+  "batch_size": 8,
+  "max_beats": 64,
+  "learning_rate": 0.001,
+  "seed": 42,
+  "manual_root": "artifacts/qwen_delineation_inputs_v2",
+  "ludb_root": "LUDB",
+  "qt_root": "data/qtdb_external",
+  "evaluate_manual": true,
+  "qwen_seen_all_datasets": true
+}

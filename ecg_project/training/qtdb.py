@@ -31,8 +31,8 @@ def manual(path):
 def entries(root,split):
     return [r for r in json.loads((Path(root)/'split.json').read_text())['records'] if r['split']==split]
 
-def evaluate(root='data/qtdb_external',checkpoint='artifacts/delineator.pt',output='reports/qtdb_baseline.json'):
-    seed_all();predictor=Predictor(checkpoint);detail=[]
+def evaluate(root='data/qtdb_external',checkpoint='artifacts/delineator.pt',output='reports/qtdb_baseline.json',predictor=None):
+    seed_all();predictor=predictor if predictor is not None else Predictor(checkpoint);detail=[]
     rows = entries(root, "external_valid")
 
     for row in tqdm(
