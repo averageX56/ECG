@@ -9,7 +9,8 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from tqdm.auto import tqdm
 from ecg_project.data.cache import begin_cache, shard, source_hashes, atomic_json
-from ecg_project.data.catalog import TARGETS, file_hash, assert_disjoint
+from ecg_project.data.catalog import file_hash, assert_disjoint
+from ecg_project.data.classifier_labels import TARGETS, LABEL_VERSION, diagnosis_labels, select_common_classes
 from ecg_project.data.policy import build_record_manifest
 from ecg_project.data.io import load_record
 from ecg_project.processing.signal import preprocess, rpeaks
@@ -113,6 +114,7 @@ def prepare(cfg, qwen):
     frame['key'] = [__import__('hashlib').sha256(str(p).encode()).hexdigest()[:24] for p in frame.path]
     if frame.key.duplicated().any():
         raise ValueError('Duplicate catalog paths')
+    frame = diagnosis_labels(frame)
     identity = dict(version=1, catalog=file_hash(cfg.catalog), qwen=file_hash(qwen/'best.pt'),
                     unet=file_hash(cfg.unet_checkpoint), lead='II/MLII/first', duration='full record',
                     additional_mit_paths=[r['path'] for r in mit_rows])
@@ -248,8 +250,9 @@ def metrics_by_cohort(frame, y, probability, classes, thresholds):
 
 def train_branch(cfg, root, frame, variant, classes):
     seed_all(cfg.seed)
-    out = begin_cache(Path(cfg.output)/variant, dict(config=asdict(cfg), manifest=file_hash(root/'manifest.csv'),
-        inputs=json.loads((root/'cache_identity.json').read_text()), variant=variant, classes=classes))
+    out = begin_cache(Path(cfg.output)/LABEL_VERSION/variant, dict(config=asdict(cfg), manifest=file_hash(root/'manifest.csv'),
+        inputs=json.loads((root/'cache_identity.json').read_text()), variant=variant, classes=classes,
+        label_version=LABEL_VERSION, diagnosis_codes={c: TARGETS[c] for c in classes}))
     if (out/'metrics.json').exists():
         return json.loads((out/'metrics.json').read_text())
     labeled = (frame[classes].to_numpy(dtype=int) >= 0).all(1)
@@ -317,7 +320,8 @@ def train_branch(cfg, root, frame, variant, classes):
             best, stale = float(score), 0
             _atomic_save(dict(state_dict=model.state_dict(), classes=classes, median=median.tolist(), scale=scale.tolist(),
                 use_intervals=variant != 'waveform', max_beats=cfg.max_beats, variant=variant,
-                input_identity=json.loads((root/'cache_identity.json').read_text())), out/'best.pt')
+                input_identity=json.loads((root/'cache_identity.json').read_text()),
+                label_version=LABEL_VERSION, diagnosis_codes={c: TARGETS[c] for c in classes}), out/'best.pt')
         else:
             stale += 1
         state = dict(state_dict=model.state_dict(), optimizer=opt.state_dict(), scheduler=scheduler.state_dict(),
@@ -391,15 +395,22 @@ def run(cfg=ClassificationConfig()):
         if not list(Path(cfg.ludb_root).glob('*.hea')):
             raise FileNotFoundError(f'Missing LUDB: {cfg.ludb_root}')
     root, frame = prepare(cfg, qwen)
+    # Keep the original source universe even if deduplication or zero-beat
+    # filtering removes all usable records from a source.
+    from ecg_project.data.policy import source_name
+    catalog_frame = build_record_manifest(cfg.catalog)
+    required_sources = set(catalog_frame.source.map(source_name))
     frame = frame[frame.beats > 0].reset_index(drop=True)
-    labels = frame[list(TARGETS)].to_numpy(dtype=int)
-    tr = (frame.split == 'train').to_numpy() & (labels >= 0).all(1)
-    classes = [c for i, c in enumerate(TARGETS) if (labels[tr, i] == 1).sum() >= 20 and (labels[tr, i] == 0).sum() >= 20]
+    classes, label_report = select_common_classes(frame, required_sources)
+    save_json(Path(cfg.output)/'diagnosis_coverage.json', label_report)
+    print('Common diagnosis classes:', ', '.join(classes), flush=True)
     if not classes:
-        raise ValueError('No diagnosis with >=20 positive and negative training records')
+        raise ValueError('No common diagnosis with >=20 positive and negative training records; see diagnosis_coverage.json')
     results = {variant: train_branch(cfg, root, frame, variant, classes) for variant in ('waveform', 'unet', 'qwen')}
     selected = max(results, key=lambda v: results[v]['valid']['macro_auroc'])
     report = dict(config=asdict(cfg), qwen_checkpoint=str(qwen/'best.pt'), classes=classes,
+        label_version=LABEL_VERSION, diagnosis_coverage=label_report,
+        classifier_root=str(Path(cfg.output)/LABEL_VERSION),
         unsupported_classes=[c for c in TARGETS if c not in classes], selected=selected,
         selection_criterion='validation macro AUROC only', metrics=results,
         evaluation_status='Qwen saw all datasets: downstream holdouts are not proven unseen by the delineator'

@@ -8,6 +8,7 @@ from ecg_project.training.interval_classification import (
     ClassificationConfig, selected_qwen, scale_features, metrics_by_cohort, train_branch,
 )
 from ecg_project.data.catalog import file_hash
+from ecg_project.data.classifier_labels import LABEL_VERSION
 
 
 def test_curriculum_uses_accepted_checkpoint_and_checks_hash(tmp_path):
@@ -67,20 +68,25 @@ def test_training_writes_reloadable_checkpoint_and_unknown_predictions(tmp_path)
         np.savez(root/'unet'/f'{key}.npz', wave=rng.normal(size=(2, 226)).astype('float32'),
                  interval=rng.normal(size=(2, 13)).astype('float32'))
         rows.append(dict(key=key, record_id=key, source='fake', AF=i % 2 if i < 6 else -1,
+                         RBBB=(1-i % 2) if i < 6 else -1, STD=i % 2 if i < 6 else -1,
                          split='train' if i < 2 else 'valid' if i < 4 else 'test'))
     frame = pd.DataFrame(rows)
     frame.to_csv(root/'manifest.csv', index=False)
     cfg = ClassificationConfig(output=str(tmp_path/'run'), device='cpu', epochs=1, batch_size=2, max_beats=2)
-    result = train_branch(cfg, root, frame, 'waveform', ['AF'])
+    classes = ['AF', 'RBBB', 'STD']
+    result = train_branch(cfg, root, frame, 'waveform', classes)
     assert result['test']['records'] == 2
-    saved = torch.load(tmp_path/'run/waveform/best.pt', weights_only=True)
-    model = IntervalClassifier(1, 26, False)
+    saved = torch.load(tmp_path/'run'/LABEL_VERSION/'waveform/best.pt', weights_only=True)
+    model = IntervalClassifier(3, 26, False)
     model.load_state_dict(saved['state_dict'])
-    assert len(saved['thresholds']) == 1
-    with np.load(tmp_path/'run/waveform/predictions.npz') as z:
+    assert len(saved['thresholds']) == 3
+    assert saved['classes'] == classes
+    assert saved['diagnosis_codes']['RBBB'] == ['59118001', '713427006']
+    with np.load(tmp_path/'run'/LABEL_VERSION/'waveform/predictions.npz') as z:
         assert len(z['probability']) == 7
-        assert z['labels'][-1, 0] == -1
-    assert train_branch(cfg, root, frame, 'waveform', ['AF']) == result
+        assert (z['labels'][-1] == -1).all()
+        assert z['probability'].shape == (7, 3)
+    assert train_branch(cfg, root, frame, 'waveform', classes) == result
 
 
 def test_preparation_pairs_crops_and_resumes_without_loading_models(tmp_path, monkeypatch):
@@ -93,7 +99,7 @@ def test_preparation_pairs_crops_and_resumes_without_loading_models(tmp_path, mo
     unet = tmp_path/'unet.pt'; unet.write_bytes(b'unet')
     catalog = tmp_path/'catalog.csv'
     row = dict(path='fake.hea', source='fake', record_id='1', patient_id='p1', readable=True,
-               split='train', **{c: 0 for c in module.TARGETS})
+               split='train', labels='426783006', **{c: 0 for c in module.TARGETS})
     pd.DataFrame([row]).to_csv(catalog, index=False)
     mit = tmp_path/'data/mit-bih'
     mit.mkdir(parents=True)
