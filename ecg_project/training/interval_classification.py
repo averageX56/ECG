@@ -248,11 +248,12 @@ def metrics_by_cohort(frame, y, probability, classes, thresholds):
             for name, mask in cohorts.items() if mask.any()}
 
 
-def train_branch(cfg, root, frame, variant, classes):
+def train_branch(cfg, root, frame, variant, classes, feature_spec=None):
     seed_all(cfg.seed)
     out = begin_cache(Path(cfg.output)/LABEL_VERSION/variant, dict(config=asdict(cfg), manifest=file_hash(root/'manifest.csv'),
         inputs=json.loads((root/'cache_identity.json').read_text()), variant=variant, classes=classes,
-        label_version=LABEL_VERSION, diagnosis_codes={c: TARGETS[c] for c in classes}))
+        label_version=LABEL_VERSION, diagnosis_codes={c: TARGETS[c] for c in classes},
+        **({'feature_spec': feature_spec} if feature_spec is not None else {})))
     if (out/'metrics.json').exists():
         return json.loads((out/'metrics.json').read_text())
     labeled = (frame[classes].to_numpy(dtype=int) >= 0).all(1)
@@ -321,7 +322,8 @@ def train_branch(cfg, root, frame, variant, classes):
             _atomic_save(dict(state_dict=model.state_dict(), classes=classes, median=median.tolist(), scale=scale.tolist(),
                 use_intervals=variant != 'waveform', max_beats=cfg.max_beats, variant=variant,
                 input_identity=json.loads((root/'cache_identity.json').read_text()),
-                label_version=LABEL_VERSION, diagnosis_codes={c: TARGETS[c] for c in classes}), out/'best.pt')
+                label_version=LABEL_VERSION, diagnosis_codes={c: TARGETS[c] for c in classes},
+                **({'feature_spec': feature_spec} if feature_spec is not None else {})), out/'best.pt')
         else:
             stale += 1
         state = dict(state_dict=model.state_dict(), optimizer=opt.state_dict(), scheduler=scheduler.state_dict(),
@@ -435,6 +437,7 @@ class ClassificationPredictor:
         self.scale = np.asarray(saved['scale'], np.float32)
         self.thresholds = np.asarray(saved['thresholds'])
         self.max_beats = saved['max_beats']
+        self.feature_spec = saved.get('feature_spec')
         self.model = IntervalClassifier(len(self.classes), len(self.median)*2, saved['use_intervals']).to(device)
         self.model.load_state_dict(saved['state_dict']); self.model.eval()
         self.delineator = None
@@ -457,8 +460,17 @@ class ClassificationPredictor:
         lead = next((l for l in ('II', 'MLII') if l in record.leads), record.leads[0])
         signal = record.signal[:, record.leads.index(lead)]
         peaks, _ = rpeaks(preprocess(signal, record.fs), record.fs)
-        waves = self.delineator.predict(signal, record.fs)[0] if self.delineator is not None else []
-        wave, features, _ = interval_features(signal, peaks, waves, record.fs)
+        if self.feature_spec is not None:
+            from ecg_project.training.trust_intervals import TrustConfig, record_features
+            spec = self.feature_spec
+            if spec['method'] != 'foreground_probability_bands_v1':
+                raise ValueError('Unknown classifier uncertainty method')
+            wave, point, trust, _ = record_features(signal, record.fs, peaks, self.delineator,
+                                                   TrustConfig(**spec['config']))
+            features = trust if spec['mode'] == 'trust' else point
+        else:
+            waves = self.delineator.predict(signal, record.fs)[0] if self.delineator is not None else []
+            wave, features, _ = interval_features(signal, peaks, waves, record.fs)
         if not len(wave):
             return dict(status='no_usable_beats', predictions={}, lead=lead)
         ids = np.linspace(0, len(wave)-1, min(len(wave), self.max_beats)).astype(int)

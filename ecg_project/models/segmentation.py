@@ -121,7 +121,12 @@ class Predictor:
     def __init__(self,checkpoint='artifacts/delineator.pt',device='cpu'):
         self.device=device;self.checkpoint=str(checkpoint);self.model=Delineator().to(device)
         self.model.load_state_dict(torch.load(checkpoint,map_location=device,weights_only=True)['state_dict']);self.model.eval()
-    def predict(self,signal,fs):
+    def predict(self,signal,fs,confidence_threshold=0.,uncertainty_threshold=None,
+                probability_smoothing_ms=20., max_extension_ms=40.):
+        if not 0 <= confidence_threshold <= 1:
+            raise ValueError('confidence_threshold must be between 0 and 1')
+        if uncertainty_threshold is not None and not 0 <= uncertainty_threshold < confidence_threshold:
+            raise ValueError('uncertainty_threshold must be below confidence_threshold')
         if signal.ndim==1:signal=signal[:,None]
         x=resample(preprocess(signal,fs),fs)
         # Long signals use overlap-add windows; prevents arbitrarily large GPU allocations.
@@ -142,8 +147,15 @@ class Predictor:
         for ch in range(signal.shape[1]):
             if np.ptp(signal[:,ch])<1e-8:
                 out.append([]);continue
+            if uncertainty_threshold is not None:
+                from ecg_project.processing.trust import decode_probability_bands
+                out.append(decode_probability_bands(probs[:,ch], x[:,ch], fs, len(signal),
+                                                    uncertainty_threshold, confidence_threshold,
+                                                    probability_smoothing_ms, max_extension_ms))
+                continue
             baseline=np.median(x[:,ch])
             mask=probs[:,ch].argmax(-1);waves=[]
+            mask[probs[:,ch].max(-1) < confidence_threshold] = 0
             for cls,wave in [(1,'P'),(2,'QRS'),(3,'T')]:
                 active=(mask==cls);changes=np.diff(np.r_[False,active,False].astype(int))
                 for a,b in zip(np.flatnonzero(changes==1),np.flatnonzero(changes==-1)):
