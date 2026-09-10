@@ -1,5 +1,5 @@
 """Reproducible v2 profiles, with optional cluster GPU pseudo-cache preparation."""
-from dataclasses import replace
+from dataclasses import replace,fields
 from pathlib import Path
 import json
 from ecg_project.training.delineation_v2 import DelineationConfig
@@ -52,3 +52,27 @@ def run_qwen(cfg,run_smoke=False):
     if run_smoke:
         train(replace(cfg,output=cfg.output+'_smoke',epochs=1,max_batches=2,valid_limit=8))
     return train(cfg)
+
+
+def full_cached_e(run_root, output=None, pseudo_root=None, model_root=None):
+    """Continue the selected E checkpoint using every existing pseudo window.
+
+    No cache builders/downloads are called. Architecture and input paths come
+    from the selected run so the warm-start adapter stays compatible.
+    """
+    from ecg_project.training.interval_classification import selected_qwen
+    selected = selected_qwen(run_root)
+    previous = json.loads((selected/'config.json').read_text())
+    known = {f.name for f in fields(DelineationConfig)}
+    cfg = DelineationConfig(**{k:v for k,v in previous.items() if k in known})
+    if cfg.architecture != 'qwen' or cfg.lambda_kd <= 0:
+        raise ValueError('Select an experiment E Qwen checkpoint with soft KD')
+    cfg = replace(cfg, output=str(output or (str(run_root)+'_full_cache_E')),
+                  warm_start=str(selected/'best.pt'), pseudo_root=pseudo_root or cfg.pseudo_root,
+                  model_root=model_root or cfg.model_root, pseudo_full_pass=True,
+                  pseudo_per_manual=4, epochs=20, patience=5, learning_rate=5e-5,
+                  max_batches=0, valid_limit=0, final_checkpoint='')
+    if Path(cfg.output).resolve() in (Path(run_root).resolve(), selected.resolve()):
+        raise ValueError('Use a separate output for full-cache E')
+    assert_qwen_inputs(cfg)
+    return cfg

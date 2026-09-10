@@ -24,7 +24,9 @@ def run_curriculum(cfg,ratios=(1,2,4),max_stale_cycles=2,min_gain=.001,source_to
         raise ValueError('Ratios must be increasing positive integers')
     if max_stale_cycles<1 or min_gain<0 or source_tolerance<0:raise ValueError('Invalid curriculum stopping criteria')
     assert_qwen_inputs(cfg)
-    root=begin_cache(cfg.output+'_curriculum',dict(config=asdict(cfg),ratios=list(ratios),max_stale_cycles=max_stale_cycles,
+    config=asdict(cfg)
+    if not cfg.pseudo_full_pass:config.pop('pseudo_full_pass')
+    root=begin_cache(cfg.output+'_curriculum',dict(config=config,ratios=list(ratios),max_stale_cycles=max_stale_cycles,
         min_gain=min_gain,source_tolerance=source_tolerance,
         manual_provenance_sha256=file_hash(Path(cfg.input_root)/'provenance.json'),
         pseudo_provenance_sha256=file_hash(Path(cfg.pseudo_root)/'provenance.json')))

@@ -4,10 +4,12 @@ from pathlib import Path
 from copy import deepcopy
 import json
 import time
+import math
 import numpy as np
 import torch
 from torch import nn
 from torch.utils.data import TensorDataset,DataLoader
+from tqdm.auto import tqdm
 from ecg_project.data.cache import validate_cache,CANONICAL_DELINEATOR
 from ecg_project.data.delineation_v2 import VERSION
 from ecg_project.models.segmentation import Delineator
@@ -46,6 +48,7 @@ class DelineationConfig:
     kd_confidence_threshold:float=0.
     distillation_temperature:float=2.
     pseudo_per_manual:int=1
+    pseudo_full_pass:bool=False  # An epoch covers every cached pseudo window once.
     pseudo_ramp_epochs:int=5
     warm_start:str|None=None  # A different run's best.pt; optimizer intentionally starts fresh.
 
@@ -57,13 +60,27 @@ def masked_ce(logits,y):
     return loss[known].mean()
 
 
+def epoch_schedule(manual_batches, pseudo_batches, ratio, full_pass=False, max_batches=0):
+    """Number of pseudo batches per step; full mode never wraps pseudo data."""
+    if manual_batches < 1 or ratio < 1 or int(ratio) != ratio:
+        raise ValueError('Nonempty manual data and positive integer pseudo ratio required')
+    if full_pass and pseudo_batches < 1:
+        raise ValueError('Full pseudo pass requires a nonempty existing pseudo cache')
+    n = max(manual_batches, math.ceil(pseudo_batches/ratio)) if full_pass else manual_batches
+    if max_batches:
+        n = min(n, max_batches)
+    return [min(ratio, max(0, pseudo_batches-k*ratio)) if full_pass else ratio if pseudo_batches else 0
+            for k in range(n)]
+
+
 def train(cfg:DelineationConfig):
     seed_all();start=time.monotonic();root=Path(cfg.input_root);out=Path(cfg.output)
     meta=validate_cache(root,VERSION)
     if cfg.architecture not in ('unet','qwen') or min(cfg.batch_size,cfg.accumulation,cfg.patience,cfg.epochs)<1:raise ValueError('Invalid delineation configuration')
     manifest=json.loads((root/'manifest.json').read_text());device=cfg.device
     if set(meta['patients']['train']) & set(meta['patients']['valid']):raise ValueError('Patient leakage')
-    config=asdict(cfg);identity=dict(config={k:v for k,v in config.items() if k not in ('epochs','output')},cache=meta)
+    config=asdict(cfg);identity=dict(config={k:v for k,v in config.items() if k not in ('epochs','output')
+        and not (k=='pseudo_full_pass' and not v)},cache=meta)
     initial=None
     if cfg.warm_start:
         from ecg_project.data.catalog import file_hash
@@ -74,6 +91,7 @@ def train(cfg:DelineationConfig):
     if cfg.lambda_supervised<=0 or min(cfg.lambda_pseudo,cfg.lambda_kd)<0 or cfg.pseudo_per_manual<1:raise ValueError('Invalid mixed-supervision weights/ratio')
     if cfg.distillation_temperature<=0 or cfg.pseudo_ramp_epochs<0:raise ValueError('Invalid distillation temperature/ramp')
     if cfg.lambda_kd and not cfg.pseudo_root:raise ValueError('Soft KD requires a pseudo cache')
+    if cfg.pseudo_full_pass and not cfg.pseudo_root:raise ValueError('Full pseudo pass requires an existing pseudo cache')
     if cfg.pseudo_root:
         from ecg_project.training.distillation import PseudoDataset
         pseudo=PseudoDataset(cfg.pseudo_root,cfg.pseudo_confidence_threshold,cfg.kd_confidence_threshold)
@@ -111,6 +129,11 @@ def train(cfg:DelineationConfig):
     source=torch.tensor((train_sources=='QTDB').astype(np.int64))
     if cfg.valid_limit:vx=vx[:cfg.valid_limit];vy=vy[:cfg.valid_limit];valid_sources=valid_sources[:cfg.valid_limit]
     loader=DataLoader(TensorDataset(x,y,source),batch_size=cfg.batch_size,shuffle=True)
+    schedule=epoch_schedule(len(loader),len(pseudo_loader) if pseudo_loader is not None else 0,
+                            cfg.pseudo_per_manual,cfg.pseudo_full_pass,cfg.max_batches)
+    print(dict(manual_windows=len(x),pseudo_windows=len(pseudo_loader.dataset) if pseudo_loader is not None else 0,
+               steps_per_epoch=len(schedule),pseudo_batches_per_epoch=sum(schedule),
+               pseudo_full_pass=cfg.pseudo_full_pass,limited=bool(cfg.max_batches)),flush=True)
     uloader=None
     if teacher is not None:
         ux=torch.from_numpy(np.load(root/'unlabeled_train_x.npy'));uloader=DataLoader(TensorDataset(ux),batch_size=cfg.batch_size,shuffle=True)
@@ -136,9 +159,11 @@ def train(cfg:DelineationConfig):
             if stale>=cfg.patience:break
             model.train();optimizer.zero_grad();losses=[];ui=iter(uloader) if uloader is not None else None
             pi=iter(pseudo_loader) if pseudo_loader is not None else None
-            n=min(len(loader),cfg.max_batches) if cfg.max_batches else len(loader)
-            for k,(bx,by,bs) in enumerate(loader):
-                if k>=n:break
+            n=len(schedule);manual_iter=iter(loader);pseudo_seen=0;manual_seen=0
+            for k,pseudo_count in tqdm(enumerate(schedule),total=n,desc=f'Full-cache E epoch {epoch+1}',disable=not cfg.pseudo_full_pass):
+                try:bx,by,bs=next(manual_iter)
+                except StopIteration:manual_iter=iter(loader);bx,by,bs=next(manual_iter)
+                manual_seen+=len(bx)
                 bx=bx.to(device);by=by.to(device);bs=bs.to(device)
                 with torch.autocast(device_type=device,dtype=torch.bfloat16,enabled=amp):
                     logits=model(bx*(.75+.5*torch.rand(len(bx),1,1,device=device))+torch.randn_like(bx)*.015)
@@ -156,20 +181,25 @@ def train(cfg:DelineationConfig):
                 if pi is not None:
                     from ecg_project.training.distillation import distillation_loss,strong_signal
                     ramp=min(1.,(epoch+1)/cfg.pseudo_ramp_epochs) if cfg.pseudo_ramp_epochs else 1.
-                    for _ in range(cfg.pseudo_per_manual):
+                    for _ in range(pseudo_count):
                         try:px,py,teacher_logits,kd_mask=next(pi)
-                        except StopIteration:pi=iter(pseudo_loader);px,py,teacher_logits,kd_mask=next(pi)
+                        except StopIteration:
+                            if cfg.pseudo_full_pass:raise RuntimeError('Pseudo loader exhausted before full-pass schedule')
+                            pi=iter(pseudo_loader);px,py,teacher_logits,kd_mask=next(pi)
+                        pseudo_seen+=len(px)
                         px=px.to(device);py=py.to(device);teacher_logits=teacher_logits.to(device);kd_mask=kd_mask.to(device)
                         with torch.autocast(device_type=device,dtype=torch.bfloat16,enabled=amp):
                             student=model(strong_signal(px))
                             extra=cfg.lambda_pseudo*masked_ce(student,py)+cfg.lambda_kd*distillation_loss(student.float(),teacher_logits,kd_mask,cfg.distillation_temperature)
                         if not torch.isfinite(extra):raise FloatingPointError('Non-finite pseudo/KD loss')
-                        (ramp*extra/(group*cfg.pseudo_per_manual)).backward();processed+=len(px)
+                        (ramp*extra/(group*pseudo_count)).backward();processed+=len(px)
                 if (k+1)%cfg.accumulation==0 or k+1==n:
                     nn.utils.clip_grad_norm_([p for p in model.parameters() if p.requires_grad],1);optimizer.step();optimizer.zero_grad()
                     if teacher is not None:
                         with torch.no_grad():
                             for t,s in zip(teacher.parameters(),model.parameters()):t.mul_(.99).add_(s,alpha=.01)
+            if cfg.pseudo_full_pass and not cfg.max_batches and pseudo_seen!=len(pseudo_loader.dataset):
+                raise RuntimeError('Full pseudo epoch did not cover every cached window')
             model.eval();cms={str(s):np.zeros((4,4),np.int64) for s in set(valid_sources)};predictions=[]
             with torch.no_grad():
                 for start_idx in range(0,len(vx),cfg.batch_size):
@@ -182,7 +212,9 @@ def train(cfg:DelineationConfig):
             reports={s:dict(dice=(2*np.diag(cm)/np.maximum(cm.sum(0)+cm.sum(1),1)).tolist(),confusion=cm.tolist(),
                 known_samples=int(cm.sum()),partial_manual=s=='QTDB') for s,cm in cms.items()}
             metric=float(np.mean([np.mean(r['dice'][1:]) for r in reports.values()]))
-            history.append(dict(epoch=epoch+1,loss=float(np.mean(losses)),valid_score=metric,by_source=reports))
+            history.append(dict(epoch=epoch+1,loss=float(np.mean(losses)),valid_score=metric,by_source=reports,
+                                manual_examples_seen=manual_seen,pseudo_examples_seen=pseudo_seen,
+                                pseudo_full_pass=cfg.pseudo_full_pass))
             if metric>best:
                 best=metric;best_epoch=epoch+1;stale=0
                 best_payload=dict(**weights(),identity=identity,epoch=best_epoch)
