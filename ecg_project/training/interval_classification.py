@@ -260,13 +260,30 @@ def augment_wave(wave):
     return result
 
 
-def train_branch(cfg, root, frame, variant, classes, feature_spec=None):
+def early_stop_state(history, min_delta=0.):
+    """Reconstruct patience from validation history, including older checkpoints."""
+    reference, stale = -float('inf'), 0
+    for row in history:
+        score = row['valid_macro_auroc']
+        if score > reference + min_delta:
+            reference, stale = score, 0
+        else:
+            stale += 1
+    return reference, stale
+
+
+def train_branch(cfg, root, frame, variant, classes, feature_spec=None, stopping_patience=None, min_delta=0.):
+    patience = cfg.patience if stopping_patience is None else stopping_patience
+    if patience < 1 or not np.isfinite(min_delta) or min_delta < 0:
+        raise ValueError('Positive patience and nonnegative finite min_delta required')
+    label = variant + ('/' + feature_spec['mode'] if feature_spec else '/baseline')
     seed_all(cfg.seed)
     out = begin_cache(Path(cfg.output)/LABEL_VERSION/variant, dict(config=asdict(cfg), manifest=file_hash(root/'manifest.csv'),
         inputs=json.loads((root/'cache_identity.json').read_text()), variant=variant, classes=classes,
         label_version=LABEL_VERSION, diagnosis_codes={c: TARGETS[c] for c in classes},
         **({'feature_spec': feature_spec} if feature_spec is not None else {})))
     if (out/'metrics.json').exists():
+        print(f'{label}: completed, reusing {out}', flush=True)
         return json.loads((out/'metrics.json').read_text())
     labeled = (frame[classes].to_numpy(dtype=int) >= 0).all(1)
     tr = (frame.split == 'train').to_numpy() & labeled
@@ -281,7 +298,9 @@ def train_branch(cfg, root, frame, variant, classes, feature_spec=None):
             samples.append(z['interval'][np.linspace(0, len(z['interval'])-1, min(16, len(z['interval']))).astype(int)])
     f = np.concatenate(samples)
     f[~np.isfinite(f)] = np.nan
-    median = np.nan_to_num(np.nanmedian(f, axis=0)).astype(np.float32)
+    observed = np.isfinite(f).any(0)
+    median = np.zeros(f.shape[1], np.float32)
+    median[observed] = np.nanmedian(f[:, observed], axis=0)
     scale = np.maximum(np.std(np.where(np.isfinite(f), f, median), axis=0), 1e-5).astype(np.float32)
     confidence_masks = bool(feature_spec and feature_spec.get('confidence_masks'))
     input_channels = 5 if confidence_masks else 1
@@ -313,8 +332,10 @@ def train_branch(cfg, root, frame, variant, classes, feature_spec=None):
         torch.set_rng_state(saved['rng'].cpu())
         if cfg.device.startswith('cuda') and 'cuda_rng' in saved:
             torch.cuda.set_rng_state_all([s.cpu() for s in saved['cuda_rng']])
+    _, stale = early_stop_state(history, min_delta)
     for epoch in range(start, cfg.epochs):
-        if stale >= cfg.patience:
+        if stale >= patience:
+            print(f'{label}: early stopping after {stale} epochs without AUROC gain > {min_delta}', flush=True)
             break
         model.train(); losses = []
         for w, f, m, y in train_loader:
@@ -332,20 +353,20 @@ def train_branch(cfg, root, frame, variant, classes, feature_spec=None):
             raise ValueError('Validation has no class with both positive and negative labels')
         history.append(dict(epoch=epoch+1, loss=float(np.mean(losses)), valid_macro_auroc=float(score)))
         if score > best:
-            best, stale = float(score), 0
+            best = float(score)
             _atomic_save(dict(state_dict=model.state_dict(), classes=classes, median=median.tolist(), scale=scale.tolist(),
                 use_intervals=variant != 'waveform', max_beats=cfg.max_beats, variant=variant, input_channels=input_channels,
                 input_identity=json.loads((root/'cache_identity.json').read_text()),
                 label_version=LABEL_VERSION, diagnosis_codes={c: TARGETS[c] for c in classes},
                 **({'feature_spec': feature_spec} if feature_spec is not None else {})), out/'best.pt')
-        else:
-            stale += 1
+        _, stale = early_stop_state(history, min_delta)
         state = dict(state_dict=model.state_dict(), optimizer=opt.state_dict(), scheduler=scheduler.state_dict(),
-                     best=best, stale=stale, epoch=epoch+1, history=history, rng=torch.get_rng_state())
+                     best=best, stale=stale, epoch=epoch+1, history=history, rng=torch.get_rng_state(),
+                     stopping_policy=dict(patience=patience, min_delta=min_delta))
         if cfg.device.startswith('cuda'):
             state['cuda_rng'] = torch.cuda.get_rng_state_all()
         _atomic_save(state, latest)
-        print(variant, history[-1], flush=True)
+        print(label, history[-1], flush=True)
     saved = torch.load(out/'best.pt', map_location=cfg.device, weights_only=True)
     model.load_state_dict(saved['state_dict'])
     probabilities = infer(loader(frame))
