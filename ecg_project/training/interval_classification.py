@@ -204,10 +204,11 @@ def scale_features(features, median, scale):
 
 
 class Bags(Dataset):
-    def __init__(self, frame, root, variant, classes, median, scale, max_beats):
+    def __init__(self, frame, root, variant, classes, median, scale, max_beats, confidence_masks=False):
         self.frame = frame.reset_index(drop=True)
         self.root, self.variant, self.classes = Path(root), variant, classes
         self.median, self.scale, self.max_beats = median, scale, max_beats
+        self.confidence_masks = confidence_masks
 
     def __len__(self):
         return len(self.frame)
@@ -220,13 +221,15 @@ class Bags(Dataset):
             # Even coverage of the complete record, identical in every branch.
             ids = np.linspace(0, n-1, min(n, self.max_beats)).astype(int)
             wave = z['wave'][ids]
+            if self.confidence_masks:
+                wave = np.concatenate([wave[:, None], z['confidence_mask'][ids]], axis=1)
             feat = scale_features(z['interval'][ids], self.median, self.scale)
         return wave, feat, row[self.classes].to_numpy(dtype=np.float32)
 
 
 def collate(items):
     size = max(len(w) for w, _, _ in items)
-    wave = torch.zeros(len(items), size, items[0][0].shape[-1])
+    wave = torch.zeros(len(items), size, *items[0][0].shape[1:])
     feat = torch.zeros(len(items), size, items[0][1].shape[-1])
     mask = torch.zeros(len(items), size, dtype=torch.bool)
     for i, (w, f, _) in enumerate(items):
@@ -246,6 +249,15 @@ def metrics_by_cohort(frame, y, probability, classes, thresholds):
             cohorts[f'{split}/{source}'] = labeled & ((frame.split == split) & (frame.source == source)).to_numpy()
     return {name: dict(records=int(mask.sum()), **multilabel_metrics(y[mask], probability[mask], classes, thresholds))
             for name, mask in cohorts.items() if mask.any()}
+
+
+def augment_wave(wave):
+    """Amplitude/noise augmentation touches ECG only, never probability channels."""
+    result = wave.clone()
+    ecg = result[:, :, 0] if result.ndim == 4 else result
+    ecg.mul_(.9 + .2*torch.rand(len(ecg), 1, 1, device=ecg.device))
+    ecg.add_(torch.randn_like(ecg)*.01)
+    return result
 
 
 def train_branch(cfg, root, frame, variant, classes, feature_spec=None):
@@ -271,11 +283,13 @@ def train_branch(cfg, root, frame, variant, classes, feature_spec=None):
     f[~np.isfinite(f)] = np.nan
     median = np.nan_to_num(np.nanmedian(f, axis=0)).astype(np.float32)
     scale = np.maximum(np.std(np.where(np.isfinite(f), f, median), axis=0), 1e-5).astype(np.float32)
+    confidence_masks = bool(feature_spec and feature_spec.get('confidence_masks'))
+    input_channels = 5 if confidence_masks else 1
     def loader(subset, shuffle=False):
-        return DataLoader(Bags(subset, root, variant, classes, median, scale, cfg.max_beats),
+        return DataLoader(Bags(subset, root, variant, classes, median, scale, cfg.max_beats, confidence_masks),
                           batch_size=cfg.batch_size, shuffle=shuffle, collate_fn=collate)
     train_loader, valid_loader = loader(frame.loc[tr], True), loader(frame.loc[va])
-    model = IntervalClassifier(len(classes), len(median)*2, variant != 'waveform').to(cfg.device)
+    model = IntervalClassifier(len(classes), len(median)*2, variant != 'waveform', input_channels).to(cfg.device)
     opt = torch.optim.AdamW(model.parameters(), lr=cfg.learning_rate, weight_decay=.01)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, cfg.epochs)
     yt = frame.loc[tr, classes].to_numpy(dtype=np.float32)
@@ -305,7 +319,7 @@ def train_branch(cfg, root, frame, variant, classes, feature_spec=None):
         model.train(); losses = []
         for w, f, m, y in train_loader:
             w, f, m, y = [a.to(cfg.device) for a in (w, f, m, y)]
-            w = w*(.9+.2*torch.rand(len(w), 1, 1, device=cfg.device)) + torch.randn_like(w)*.01
+            w = augment_wave(w)
             opt.zero_grad(set_to_none=True)
             loss = loss_fn(model(w, f, m), y)
             loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.)
@@ -320,7 +334,7 @@ def train_branch(cfg, root, frame, variant, classes, feature_spec=None):
         if score > best:
             best, stale = float(score), 0
             _atomic_save(dict(state_dict=model.state_dict(), classes=classes, median=median.tolist(), scale=scale.tolist(),
-                use_intervals=variant != 'waveform', max_beats=cfg.max_beats, variant=variant,
+                use_intervals=variant != 'waveform', max_beats=cfg.max_beats, variant=variant, input_channels=input_channels,
                 input_identity=json.loads((root/'cache_identity.json').read_text()),
                 label_version=LABEL_VERSION, diagnosis_codes={c: TARGETS[c] for c in classes},
                 **({'feature_spec': feature_spec} if feature_spec is not None else {})), out/'best.pt')
@@ -438,7 +452,8 @@ class ClassificationPredictor:
         self.thresholds = np.asarray(saved['thresholds'])
         self.max_beats = saved['max_beats']
         self.feature_spec = saved.get('feature_spec')
-        self.model = IntervalClassifier(len(self.classes), len(self.median)*2, saved['use_intervals']).to(device)
+        self.model = IntervalClassifier(len(self.classes), len(self.median)*2, saved['use_intervals'],
+                                        saved.get('input_channels', 1)).to(device)
         self.model.load_state_dict(saved['state_dict']); self.model.eval()
         self.delineator = None
         if saved['use_intervals']:
@@ -465,9 +480,13 @@ class ClassificationPredictor:
             spec = self.feature_spec
             if spec['method'] != 'foreground_probability_bands_v1':
                 raise ValueError('Unknown classifier uncertainty method')
-            wave, point, trust, _ = record_features(signal, record.fs, peaks, self.delineator,
-                                                   TrustConfig(**spec['config']))
-            features = trust if spec['mode'] == 'trust' else point
+            use_masks = spec.get('confidence_masks', False)
+            kwargs = {'include_confidence_masks': True} if use_masks else {}
+            wave, point, trust, metadata = record_features(signal, record.fs, peaks, self.delineator,
+                                                          TrustConfig(**spec['config']), **kwargs)
+            features = point if spec['mode'] == 'point' else trust
+            if use_masks:
+                wave = np.concatenate([wave[:, None], metadata['confidence_mask']], axis=1)
         else:
             waves = self.delineator.predict(signal, record.fs)[0] if self.delineator is not None else []
             wave, features, _ = interval_features(signal, peaks, waves, record.fs)

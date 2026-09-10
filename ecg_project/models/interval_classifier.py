@@ -23,10 +23,11 @@ class IntervalClassifier(nn.Module):
 
     Input: [records, beats, samples], [records, beats, features], valid beat mask.
     """
-    def __init__(self, classes, interval_dim, use_intervals=True):
+    def __init__(self, classes, interval_dim, use_intervals=True, input_channels=1):
         super().__init__()
         self.use_intervals = use_intervals
-        self.encoder = nn.Sequential(InceptionBlock(1), InceptionBlock(128), InceptionBlock(128),
+        self.input_channels = input_channels
+        self.encoder = nn.Sequential(InceptionBlock(input_channels), InceptionBlock(128), InceptionBlock(128),
                                      nn.AvgPool1d(2), InceptionBlock(128), InceptionBlock(128), InceptionBlock(128))
         self.interval = nn.Sequential(nn.Linear(interval_dim, 64), nn.LayerNorm(64), nn.SiLU())
         dim = 256 + (64 if use_intervals else 0)
@@ -37,7 +38,12 @@ class IntervalClassifier(nn.Module):
         if not mask.any(1).all():
             raise ValueError('Every record needs at least one valid beat')
         # Encode only real beats; padding cannot change normalization or pooling.
-        encoded = self.encoder(wave[mask].unsqueeze(1))
+        real = wave[mask]
+        if real.ndim == 2:
+            real = real.unsqueeze(1)
+        if real.shape[1] != self.input_channels:
+            raise ValueError('Classifier input channel count mismatch')
+        encoded = self.encoder(real)
         features = torch.cat([encoded.mean(-1), encoded.amax(-1)], -1)
         if self.use_intervals:
             features = torch.cat([features, self.interval(interval[mask])], -1)

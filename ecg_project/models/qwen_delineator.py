@@ -66,12 +66,15 @@ class Predictor:
         self.checkpoint=str(run_root)
         self._predict=BasePredictor.predict
     def predict(self,signal,fs,confidence_threshold=0.,uncertainty_threshold=None,
-                probability_smoothing_ms=20., max_extension_ms=40.):
+                probability_smoothing_ms=20., max_extension_ms=40., return_probabilities=False):
         # One lead per call bounds memory independently of channel count.
         import numpy as np
         if signal.ndim==1:signal=signal[:,None]
-        return [self._predict(self,signal[:,i],fs,confidence_threshold=confidence_threshold,
+        results = [self._predict(self,signal[:,i],fs,confidence_threshold=confidence_threshold,
                              uncertainty_threshold=uncertainty_threshold,
                              probability_smoothing_ms=probability_smoothing_ms,
-                             max_extension_ms=max_extension_ms)[0]
+                             max_extension_ms=max_extension_ms, return_probabilities=return_probabilities)
                 for i in range(signal.shape[1])]
+        if return_probabilities:
+            return [r[0][0] for r in results], np.concatenate([r[1] for r in results], axis=1)
+        return [r[0] for r in results]

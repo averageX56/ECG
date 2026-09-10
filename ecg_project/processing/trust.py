@@ -2,6 +2,19 @@
 import numpy as np
 
 
+def smooth_probabilities(probs, smoothing_ms=20.):
+    """Preserve soft class probabilities and their sum on the 250 Hz grid."""
+    if not np.isfinite(smoothing_ms) or smoothing_ms < 0:
+        raise ValueError('Nonnegative finite smoothing required')
+    size = max(1, round(smoothing_ms*250/1000))
+    size += (size % 2 == 0)
+    probs = np.asarray(probs, dtype=np.float64)
+    if size > 1:
+        probs = np.stack([np.convolve(np.pad(probs[:, c], (size//2, size//2), mode='edge'),
+                                     np.ones(size)/size, mode='valid') for c in range(4)], axis=1)
+    return probs
+
+
 def decode_probability_bands(probs, signal, fs, original_length, low=.3, high=.5,
                              smoothing_ms=20., max_extension_ms=40.):
     """250 Hz probabilities -> confident core plus attached foreground envelope.
@@ -16,12 +29,7 @@ def decode_probability_bands(probs, signal, fs, original_length, low=.3, high=.5
         raise ValueError('Nonnegative finite smoothing/extension required')
     # Smooth probabilities, not a binary mask. Tiny confidence flicker no
     # longer creates a piano of alternating foreground/background samples.
-    size = max(1, round(smoothing_ms*250/1000))
-    size += (size % 2 == 0)
-    probs = np.asarray(probs, dtype=np.float64)
-    if size > 1:
-        probs = np.stack([np.convolve(np.pad(probs[:, c], (size//2, size//2), mode='edge'),
-                                     np.ones(size)/size, mode='valid') for c in range(4)], axis=1)
+    probs = smooth_probabilities(probs, smoothing_ms)
     extension = round(max_extension_ms*250/1000)
     winner = probs.argmax(-1)
     waves = []

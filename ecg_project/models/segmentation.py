@@ -122,7 +122,7 @@ class Predictor:
         self.device=device;self.checkpoint=str(checkpoint);self.model=Delineator().to(device)
         self.model.load_state_dict(torch.load(checkpoint,map_location=device,weights_only=True)['state_dict']);self.model.eval()
     def predict(self,signal,fs,confidence_threshold=0.,uncertainty_threshold=None,
-                probability_smoothing_ms=20., max_extension_ms=40.):
+                probability_smoothing_ms=20., max_extension_ms=40., return_probabilities=False):
         if not 0 <= confidence_threshold <= 1:
             raise ValueError('confidence_threshold must be between 0 and 1')
         if uncertainty_threshold is not None and not 0 <= uncertainty_threshold < confidence_threshold:
@@ -167,7 +167,7 @@ class Predictor:
                     waves.append(dict(wave=wave,onset=onset,peak=peak,offset=offset,
                                       confidence=float(probs[a:b,ch,cls].mean()),source='predicted'))
             out.append(sorted(waves,key=lambda w:w['onset']))
-        return out
+        return (out, probs) if return_probabilities else out
 
 def evaluate(root='LUDB',checkpoint='artifacts/delineator.pt',split='test',output='reports/segmentation_test.json',predictor=None,limit=0):
     predictor=predictor if predictor is not None else Predictor(checkpoint)

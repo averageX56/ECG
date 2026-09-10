@@ -80,7 +80,8 @@ def test_record_features_uses_one_probability_pass(monkeypatch):
     assert point.shape == (1, 13) and trust.shape == (1, 65)
 
 
-def test_preparation_resumes_and_preserves_serving_identity(tmp_path, monkeypatch):
+@pytest.mark.parametrize('use_masks', [False, True])
+def test_preparation_resumes_and_preserves_serving_identity(tmp_path, monkeypatch, use_masks):
     import ecg_project.training.trust_intervals as module
     from ecg_project.models import segmentation, qwen_delineator
     original = tmp_path/'original'
@@ -97,20 +98,26 @@ def test_preparation_resumes_and_preserves_serving_identity(tmp_path, monkeypatc
     monkeypatch.setattr(qwen_delineator, 'Predictor', lambda *args: calls.append('qwen'))
     monkeypatch.setattr(module, '_load_signal', lambda row: (np.zeros(500), 250))
     monkeypatch.setattr(base, 'rpeaks', lambda *args: (np.array([250]), None))
-    monkeypatch.setattr(module, 'record_features', lambda *args: (
-        np.zeros((1, 226)), np.ones((1, 13)), np.ones((1, 65)), dict(ids=np.array([0]), waves=[])))
+    monkeypatch.setattr(module, 'record_features', lambda *args, **kwargs: (
+        np.zeros((1, 226)), np.ones((1, 13)), np.ones((1, 65)),
+        dict(ids=np.array([0]), waves=[], confidence_mask=np.full((1, 4, 226), .25, np.float32))))
     cfg = base.ClassificationConfig(device='cpu')
-    root, point = module.prepare(cfg, TrustConfig(), original, frame, tmp_path/'qwen', tmp_path/'out')
+    root, point = module.prepare(cfg, TrustConfig(), original, frame, tmp_path/'qwen', tmp_path/'out', use_masks)
     assert calls == ['unet', 'qwen']
     saved_identity = json.loads((root/'cache_identity.json').read_text())
     assert saved_identity['unet'] == 'unet-hash' and saved_identity['qwen'] == 'qwen-hash'
+    if use_masks:
+        with np.load(root/'qwen/record.npz') as z:
+            assert z['confidence_mask'].shape == (1, 4, 226)
+            np.testing.assert_allclose(z['confidence_mask'].sum(1), 1)
     with np.load(point/'qwen/record.npz') as z:
         assert z['interval'].shape == (1, 13)
-    module.prepare(cfg, TrustConfig(), original, frame, tmp_path/'qwen', tmp_path/'out')
+    module.prepare(cfg, TrustConfig(), original, frame, tmp_path/'qwen', tmp_path/'out', use_masks)
     assert calls == ['unet', 'qwen']
 
 
-def test_trust_classifier_checkpoint_and_serving(tmp_path, monkeypatch):
+@pytest.mark.parametrize('use_masks', [False, True])
+def test_trust_classifier_checkpoint_and_serving(tmp_path, monkeypatch, use_masks):
     torch.set_num_threads(2)
     root = tmp_path/'inputs'
     (root/'unet').mkdir(parents=True)
@@ -121,6 +128,7 @@ def test_trust_classifier_checkpoint_and_serving(tmp_path, monkeypatch):
     rng = np.random.default_rng(42)
     for i in range(6):
         np.savez(root/'unet'/f'{i}.npz', wave=rng.normal(size=(2, 226)).astype('float32'),
+                 confidence_mask=np.full((2, 4, 226), .25, np.float32),
                  interval=rng.normal(size=(2, 65)).astype('float32'))
         rows.append(dict(key=str(i), record_id=str(i), source='fake', AF=i % 2,
                          split='train' if i < 2 else 'valid' if i < 4 else 'test'))
@@ -128,16 +136,20 @@ def test_trust_classifier_checkpoint_and_serving(tmp_path, monkeypatch):
     frame.to_csv(root/'manifest.csv', index=False)
     cfg = base.ClassificationConfig(output=str(tmp_path/'out'), device='cpu', epochs=1, batch_size=2)
     spec = dict(method=METHOD, config=asdict(TrustConfig()), mode='trust')
+    if use_masks:
+        spec.update(mode='masks', confidence_masks=True)
     base.train_branch(cfg, root, frame, 'unet', ['AF'], spec)
     saved_path = tmp_path/'out'/LABEL_VERSION/'unet/best.pt'
     saved = torch.load(saved_path, weights_only=True)
     assert len(saved['median']) == 65 and saved['feature_spec'] == spec
+    assert saved['input_channels'] == (5 if use_masks else 1)
     from ecg_project.models import segmentation
     monkeypatch.setattr(segmentation, 'Predictor', lambda *args: object())
     import ecg_project.training.trust_intervals as module
     monkeypatch.setattr(base, 'rpeaks', lambda *args: (np.array([100, 300]), None))
-    monkeypatch.setattr(module, 'record_features', lambda *args: (
-        np.zeros((2, 226), np.float32), np.zeros((2, 13)), np.zeros((2, 65)), {}))
+    monkeypatch.setattr(module, 'record_features', lambda *args, **kwargs: (
+        np.zeros((2, 226), np.float32), np.zeros((2, 13)), np.zeros((2, 65)),
+        dict(confidence_mask=np.full((2, 4, 226), .25, np.float32))))
     predictor = base.ClassificationPredictor(saved_path, checkpoint, device='cpu')
     result = predictor.predict(SimpleNamespace(signal=np.zeros((500, 1)), fs=250, leads=['II']))
     assert result['status'] == 'ok' and 'AF' in result['predictions']

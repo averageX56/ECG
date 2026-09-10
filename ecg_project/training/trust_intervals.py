@@ -14,7 +14,8 @@ from ecg_project.data.catalog import file_hash
 from ecg_project.data.classifier_labels import select_common_classes
 from ecg_project.data.policy import build_record_manifest, source_name
 from ecg_project.processing.features import BEAT_FEATURE_NAMES
-from ecg_project.processing.trust import feature_bands
+from ecg_project.processing.trust import feature_bands, smooth_probabilities
+from ecg_project.processing.signal import beat_windows
 from ecg_project.training import interval_classification as base
 from ecg_project.utils import save_json
 
@@ -36,15 +37,24 @@ class TrustConfig:
             raise ValueError('Nonnegative finite smoothing and extension required')
 
 
-def record_features(signal, fs, peaks, predictor, cfg):
+def record_features(signal, fs, peaks, predictor, cfg, include_confidence_masks=False):
     cfg.validate()
-    waves = predictor.predict(signal, fs, confidence_threshold=cfg.confidence_threshold,
+    prediction = predictor.predict(signal, fs, confidence_threshold=cfg.confidence_threshold,
                               uncertainty_threshold=cfg.uncertainty_threshold,
                               probability_smoothing_ms=cfg.probability_smoothing_ms,
-                              max_extension_ms=cfg.max_extension_ms)[0]
+                              max_extension_ms=cfg.max_extension_ms,
+                              **({'return_probabilities': True} if include_confidence_masks else {}))
+    waves = prediction[0][0] if include_confidence_masks else prediction[0]
     wave, features, ids = base.interval_features(signal, peaks, waves, fs)
     point, trust = feature_bands(features, np.asarray(peaks)[ids], waves, fs)
-    return wave, point, trust, dict(ids=ids, waves=waves)
+    metadata = dict(ids=ids, waves=waves)
+    if include_confidence_masks:
+        probabilities = smooth_probabilities(prediction[1][:, 0, :], cfg.probability_smoothing_ms)
+        masks, mask_ids = beat_windows(probabilities, np.round(np.asarray(peaks)*250/fs).astype(int), 250)
+        if not np.array_equal(ids, mask_ids) or masks.shape[1] != wave.shape[-1]:
+            raise ValueError('Confidence mask / ECG time alignment mismatch')
+        metadata['confidence_mask'] = masks.transpose(0, 2, 1).astype(np.float32)
+    return wave, point, trust, metadata
 
 
 def _load_signal(row):
@@ -57,10 +67,12 @@ def _load_signal(row):
     return record.signal[:, record.leads.index(lead)], record.fs
 
 
-def prepare(cfg, trust_cfg, original_root, frame, qwen, output):
+def prepare(cfg, trust_cfg, original_root, frame, qwen, output, include_confidence_masks=False):
     identity = dict(**json.loads((original_root/'cache_identity.json').read_text()),
                     method=METHOD, config=asdict(trust_cfg),
                     manifest=file_hash(original_root/'manifest.csv'))
+    if include_confidence_masks:
+        identity['confidence_masks'] = 'softmax_250hz_background_P_QRS_T_v1'
     root = begin_cache(output/'inputs', identity)
     for variant in ('unet', 'qwen'):
         branch = begin_cache(root/variant, identity)
@@ -81,11 +93,15 @@ def prepare(cfg, trust_cfg, original_root, frame, qwen, output):
                     # Use the complete R-peak list, including edge beats, to keep
                     # RR context identical to the deterministic preparation.
                     peaks, _ = base.rpeaks(base.preprocess(signal, fs), fs)
-                    wave, point, trust, meta = record_features(signal, fs, peaks, predictor, trust_cfg)
+                    kwargs = {'include_confidence_masks': True} if include_confidence_masks else {}
+                    wave, point, trust, meta = record_features(signal, fs, peaks, predictor, trust_cfg, **kwargs)
                     with np.load(original) as old:
                         if not np.array_equal(old['peaks'], peaks[meta['ids']]) or not np.array_equal(old['wave'], wave):
                             raise ValueError(f'Trust/base crop mismatch: {row.key}')
-                    return dict(wave=wave, interval=trust, point=point, waves=json.dumps(meta['waves']), fs=fs)
+                    arrays = dict(wave=wave, interval=trust, point=point, waves=json.dumps(meta['waves']), fs=fs)
+                    if include_confidence_masks:
+                        arrays['confidence_mask'] = meta['confidence_mask']
+                    return arrays
                 shard(branch, row.key, dict(original_sha256=file_hash(original), experiment=identity), compute)
         finally:
             del predictor
@@ -107,13 +123,13 @@ def prepare(cfg, trust_cfg, original_root, frame, qwen, output):
     return root, point_root
 
 
-def run(cfg=None, trust_cfg=None, output=None):
+def run(cfg=None, trust_cfg=None, output=None, include_confidence_masks=False):
     cfg = cfg or base.ClassificationConfig()
     if min(cfg.epochs, cfg.patience, cfg.batch_size, cfg.max_beats) < 1 or cfg.learning_rate <= 0:
         raise ValueError('Invalid classifier training parameters')
     trust_cfg = trust_cfg or TrustConfig()
     trust_cfg.validate()
-    output = Path(output or (cfg.output + '_trust'))
+    output = Path(output or (cfg.output + ('_trust_masks' if include_confidence_masks else '_trust')))
     if output.resolve() == Path(cfg.output).resolve():
         raise ValueError('Trust experiment requires a separate output')
     qwen = base.selected_qwen(cfg.qwen_run)
@@ -124,15 +140,21 @@ def run(cfg=None, trust_cfg=None, output=None):
     if not classes:
         raise ValueError('No common supported diagnosis classes')
     begin_cache(output, dict(method=METHOD, config=asdict(trust_cfg), classifier=asdict(cfg),
+                             **({'confidence_masks': 'softmax_250hz_background_P_QRS_T_v1'} if include_confidence_masks else {}),
                              original_inputs=json.loads((original_root/'cache_identity.json').read_text())))
     save_json(output/'diagnosis_coverage.json', label_report)
-    root, point_root = prepare(cfg, trust_cfg, original_root, frame, qwen, output)
+    root, point_root = prepare(cfg, trust_cfg, original_root, frame, qwen, output, include_confidence_masks)
     results, coverage = {}, []
     for variant in ('unet', 'qwen'):
-        for mode, inputs in (('point', point_root), ('trust', root)):
+        modes = [('point', point_root), ('trust', root)]
+        if include_confidence_masks:
+            modes.append(('masks', root))
+        for mode, inputs in modes:
             spec = dict(method=METHOD, config=asdict(trust_cfg), mode=mode,
                         feature_names=FEATURE_NAMES if mode == 'point' else
                         [f'{stat}/{name}' for stat in ('point', 'lower', 'upper', 'width', 'confidence') for name in FEATURE_NAMES])
+            if mode == 'masks':
+                spec.update(confidence_masks=True, mask_channels=['background', 'P', 'QRS', 'T'], mask_fs=250)
             results[f'{variant}/{mode}'] = base.train_branch(
                 replace(cfg, output=str(output/mode), evaluate_manual=False), inputs, frame, variant, classes, spec)
         for source, cohort in frame.groupby('source'):
@@ -150,6 +172,7 @@ def run(cfg=None, trust_cfg=None, output=None):
                             for i, name in enumerate(FEATURE_NAMES))
     selected = max(results, key=lambda name: results[name]['valid']['macro_auroc'])
     report = dict(method=METHOD, config=asdict(trust_cfg), classes=classes, selected=selected,
+                  confidence_masks=include_confidence_masks,
                   metrics=results, interpretation='Confident wave core >= high; attached uncertain foreground >= low. '
                   'Class 0 and competing wave classes stop envelopes. Feature bounds come from boundary envelopes. '
                   'Probability bands, not statistical coverage guarantees; fixed R peaks and morphology.',
